@@ -133,7 +133,7 @@ st.caption(f"{len(slate)} games · {len(hitter_stats)} hitters · {len(pitcher_s
 
 
 # ---------------------------------------------------------------------------
-# Quick Reference Dashboard Legend (Incorporated Legend)
+# Quick Reference Dashboard Legend
 # ---------------------------------------------------------------------------
 
 with st.expander("📖 Dashboard Metric Legend & Quick Reference Guide", expanded=False):
@@ -310,7 +310,7 @@ progress.empty()
 
 
 # ---------------------------------------------------------------------------
-# 📋 Slate Summary — Starting Pitchers
+# 📋 Slate Summary — Starting Pitchers (Fixed Crash Zone)
 # ---------------------------------------------------------------------------
 
 st.subheader("📋 Starting Pitcher Overview")
@@ -327,19 +327,25 @@ pitcher_slate = build_pitcher_slate(slate, pitcher_stats, {
 
 if not pitcher_slate.empty:
     pitcher_slate["verdict"] = pitcher_slate["test_score"].apply(lambda x: verdict_color(x, scale=(45, 65)))
-    cols_show = ["verdict", "pitcher_name", "team", "home_away", "opp", "throws",
-                 "test_score", "kHR", "proj_k", "form_arrow",
-                 "era", "whip", "k9", "bb9", "hr9", "k_pct", "whiff_pct", "csw_pct",
-                 "xwoba_allowed", "barrel_allowed", "recent_era", "recent_k9", "days_rest", "avg_recent_pitches"]
-    display = pitcher_slate[[c for c in cols_show if c in pitcher_slate.columns]].rename(columns={
-        "verdict": "", "pitcher_name": "Pitcher", "team": "Tm", "home_away": "", "opp": "Opp", "throws": "T",
+    
+    # 1. Define the precise map of original keys to final labels
+    rename_mapping = {
         "test_score": "Test", "kHR": "kHR", "proj_k": "Proj K", "form_arrow": "Trend",
         "era": "ERA", "whip": "WHIP", "k9": "K/9", "bb9": "BB/9", "hr9": "HR/9",
         "k_pct": "K%", "whiff_pct": "Whiff%", "csw_pct": "CSW%", "xwoba_allowed": "xwOBA", "barrel_allowed": "Brl%",
-        "recent_era": "L5 ERA", "recent_k9": "L5 K/9", "days_rest": "Rest", "avg_recent_pitches": "Pitches",
+        "recent_era": "L5 ERA", "recent_k9": "L5 K/9", "days_rest": "Rest", "avg_recent_pitches": "Pitches"
+    }
+    
+    # 2. Extract only the columns that actually exist inside pitcher_slate right now
+    base_cols = ["verdict", "pitcher_name", "team", "home_away", "opp", "throws"]
+    existing_data_cols = [c for c in rename_mapping.keys() if c in pitcher_slate.columns]
+    
+    display = pitcher_slate[base_cols + existing_data_cols].rename(columns={
+        **{"verdict": "", "pitcher_name": "Pitcher", "team": "Tm", "home_away": "", "opp": "Opp", "throws": "T"},
+        **rename_mapping
     })
     
-    # SlateFix style guard lookup
+    # 3. Apply styles safely based purely on columns that made it to the final display frame
     green_p = [c for c in ["Test", "kHR", "Proj K", "K/9", "K%", "Whiff%", "CSW%", "L5 K/9"] if c in display.columns]
     red_p = [c for c in ["ERA", "WHIP", "BB/9", "HR/9", "xwOBA", "Brl%", "L5 ERA"] if c in display.columns]
     
@@ -360,7 +366,7 @@ st.divider()
 
 
 # ---------------------------------------------------------------------------
-# 🎮 Game Breakdowns Section (Now isolated game by game)
+# 🎮 Game Breakdowns Section (Isolated Matchups)
 # ---------------------------------------------------------------------------
 
 st.subheader("🎮 Isolated Game-by-Game Matchups")
@@ -413,7 +419,7 @@ def _get_label_string(row):
     except Exception:
         return f"🏟️ {row['away_team_abbr']} @ {row['home_team_abbr']}"
 
-# Create isolated views inside expanding container panels for each game
+# Create isolated views inside containers for each game
 for _, game in slate.iterrows():
     ctx = game_context_map[game["gamePk"]]
     park = ctx["park"]
