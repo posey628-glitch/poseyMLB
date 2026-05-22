@@ -251,7 +251,7 @@ for idx, (_, game) in enumerate(slate.iterrows()):
     home_matchup = grand_slam_probability(home_matchup, pd.Series(away_p_row) if away_p_row else None, full_hr_mult)
 
     # NEW: Calibrated HR probability per hitter (the prop-betting number)
-    for matchup_df, opp_p_row, opp_p_id, framing_for_their_K in [
+    for matchup_df, opp_p_row, opp_p_id in [
         (away_matchup, home_p_row, game["home_pitcher_id"]),
         (home_matchup, away_p_row, game["away_pitcher_id"]),
     ]:
