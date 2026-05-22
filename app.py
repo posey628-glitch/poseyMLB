@@ -34,6 +34,9 @@ def c_h_trad(): return get_hitter_traditional()
 @st.cache_data(ttl=3600)
 def c_fangraphs(): return get_fangraphs_hitter_stats()
 
+@st.cache_data(ttl=86400)
+def c_lookup(): return get_player_lookup()
+
 @st.cache_data(ttl=900)
 def c_weather(lat, lon, dt):
     return fetch_weather(lat, lon, dt)
@@ -45,17 +48,6 @@ def clean_name(name: str):
         return name
     name = re.sub(r"[^a-zA-Z\s]", "", name)
     return name.lower().strip()
-
-def ensure_player_name_column(df: pd.DataFrame):
-    possible = ["player_name", "name", "full_name", "player", "batter_name"]
-
-    for col in possible:
-        if col in df.columns:
-            df["player_name"] = df[col]
-            return df
-
-    st.error("No player name column found.")
-    return df
 
 def apply_stat_fallbacks(df):
 
@@ -83,22 +75,24 @@ def add_data_score(df):
     return df
 
 def row_color(row):
+
     e = row.get("model_edge", None)
-    if pd.isna(e): return [""]*len(row)
+
+    if pd.isna(e):
+        return [""] * len(row)
 
     if e >= 8:
-        return ["background-color: rgba(0,255,0,0.15)"]*len(row)
+        return ["background-color: rgba(0,255,0,0.15)"] * len(row)
     elif e >= 4:
-        return ["background-color: rgba(255,255,0,0.15)"]*len(row)
+        return ["background-color: rgba(255,255,0,0.15)"] * len(row)
     elif e >= 0:
-        return ["background-color: rgba(255,165,0,0.15)"]*len(row)
+        return ["background-color: rgba(255,165,0,0.15)"] * len(row)
     else:
-        return ["background-color: rgba(255,0,0,0.10)"]*len(row)
+        return ["background-color: rgba(255,0,0,0.10)"] * len(row)
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
     st.title("⚾ MLB Props")
-
     selected_date = st.date_input("Slate", value=date.today())
     search_player = st.text_input("Search Player")
     min_hr = st.slider("Min HR%", 0.0, 50.0, 5.0)
@@ -113,15 +107,21 @@ slate = c_slate(selected_date.isoformat())
 if slate.empty:
     st.stop()
 
+# ✅ load core stats
 hitter_stats = c_hitter().merge(c_h_trad(), on="player_id", how="left")
 
-# ✅ fix name issue
-hitter_stats = ensure_player_name_column(hitter_stats)
+# ✅ PLAYER LOOKUP (CRITICAL FIX)
+lookup = c_lookup()
+hitter_stats = hitter_stats.merge(lookup, on="player_id", how="left")
 
-# ✅ clean names
+if "player_name" not in hitter_stats.columns:
+    st.error("Player lookup failed — cannot map player IDs to names.")
+    st.stop()
+
+# ✅ CLEAN NAME FOR FG MATCH
 hitter_stats["player_name_clean"] = hitter_stats["player_name"].apply(clean_name)
 
-# ✅ Fangraphs
+# ✅ FANGRAPHS
 fg = c_fangraphs()
 if not fg.empty and "player_name_clean" in fg.columns:
     hitter_stats = hitter_stats.merge(fg, on="player_name_clean", how="left")
@@ -134,7 +134,7 @@ game_map = {}
 
 for g in slate.itertuples():
 
-    park = get_park(getattr(g,"venue",""))
+    park = get_park(getattr(g, "venue", ""))
 
     weather = c_weather(
         park.get("lat"),
@@ -143,13 +143,13 @@ for g in slate.itertuples():
     ) if park.get("lat") else {}
 
     wx_mult, wx_text = hr_multiplier(weather, park)
-    park_mult = park.get("hr_factor",100)/100
+    park_mult = park.get("hr_factor", 100) / 100
 
-    away_lineup = get_lineup(g.gamePk,"away")
-    home_lineup = get_lineup(g.gamePk,"home")
+    away_lineup = get_lineup(g.gamePk, "away")
+    home_lineup = get_lineup(g.gamePk, "home")
 
-    ap = pitcher_stats[pitcher_stats.player_id==g.away_pitcher_id]
-    hp = pitcher_stats[pitcher_stats.player_id==g.home_pitcher_id]
+    ap = pitcher_stats[pitcher_stats.player_id == g.away_pitcher_id]
+    hp = pitcher_stats[pitcher_stats.player_id == g.home_pitcher_id]
 
     ap = ap.iloc[0].to_dict() if len(ap) else {}
     hp = hp.iloc[0].to_dict() if len(hp) else {}
@@ -163,9 +163,10 @@ for g in slate.itertuples():
     away_df = add_data_score(away_df)
     home_df = add_data_score(home_df)
 
-    for df,p in [(away_df,hp),(home_df,ap)]:
+    for df, p in [(away_df, hp), (home_df, ap)]:
 
-        if df.empty: continue
+        if df.empty:
+            continue
 
         df = hr_probability(df, pd.Series(p), wx_mult)
 
@@ -176,8 +177,8 @@ for g in slate.itertuples():
 
         for row in df.itertuples():
             pa = hr_prob_per_pa(row._asdict(), p)
+            game_hr = hr_prob_full_game(pa) * 100
 
-            game_hr = hr_prob_full_game(pa)*100
             hr_game.append(game_hr)
             edges.append(game_hr - 12.5)
 
@@ -201,8 +202,9 @@ all_df = pd.concat(
 )
 
 if not all_df.empty:
-    st.write("Total:", len(all_df))
-    st.write("Missing ISO:", all_df["iso"].isna().sum() if "iso" in all_df.columns else "-")
+    st.write("Total Hitters:", len(all_df))
+    if "iso" in all_df.columns:
+        st.write("Missing ISO:", all_df["iso"].isna().sum())
 
 # ---------------- RENDER ----------------
 
@@ -219,8 +221,13 @@ def render(df):
         df = df[df["hr_game_pct"] >= min_hr]
 
     cols = [c for c in [
-        "player_name","hr_game_pct","model_edge",
-        "iso","xwoba","data_score","data_source"
+        "player_name",
+        "hr_game_pct",
+        "model_edge",
+        "iso",
+        "xwoba",
+        "data_score",
+        "data_source"
     ] if c in df.columns]
 
     styled = df[cols].style.apply(row_color, axis=1)
@@ -236,10 +243,11 @@ for g in slate.itertuples():
 
     st.markdown(f"### {g.away_team_abbr} @ {g.home_team_abbr}")
 
-    t1,t2 = st.tabs(["Away","Home"])
+    tab1, tab2 = st.tabs(["Away", "Home"])
 
-    with t1:
+    with tab1:
         render(ctx["away"])
 
-    with t2:
+    with tab2:
         render(ctx["home"])
+
