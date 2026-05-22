@@ -1,18 +1,12 @@
 """
 app.py — MLB Daily Prop Betting Dashboard
 ==========================================
-Built for daily HR and K prop research.
+Built for isolated daily HR and K prop research.
 
 Top-level sections:
-  1. 💰 Top Prop Edges       — Best HR / K bets across the slate
-  2. 🎯 Slate Highlights     — Sleepers, GS, top HR/K candidates
-  3. 📋 Slate Summary        — Pitcher rankings with Verdict
-  4. 🎮 Per-game breakdowns  — Full matchups, pitch-match, BvP, arsenals
-
-🔔 RESPONSIBLE BETTING REMINDER:
-   Sportsbooks employ quants whose lines are sharp. A homebrew model
-   rarely beats them long-term. Realistic outcome: occasional 3-5% edges.
-   Bet small flat units. Shop lines. Treat this as one input.
+  1. 📖 Dashboard Legend      — Interpret abbreviations & colors
+  2. 📋 Pitcher Slate Overview — Summary of starting pitching across baseball
+  3. 🎮 Isolated Matchups     — Full game-by-game player data vs. today's pitchers
 """
 
 from __future__ import annotations
@@ -51,7 +45,7 @@ st.set_page_config(page_title="MLB Prop Dashboard", layout="wide", page_icon="�
 
 
 # ---------------------------------------------------------------------------
-# Sidebar
+# Sidebar Settings
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
@@ -87,7 +81,7 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
-# Load shared data
+# Load shared season data
 # ---------------------------------------------------------------------------
 
 with st.spinner("Loading slate..."):
@@ -114,7 +108,6 @@ if not pitcher_trad.empty and "player_id" in pitcher_stats.columns:
         on="player_id", how="left", suffixes=("", "_t"),
     )
 
-# Optional context loads
 hitter_pitch_arsenal = pd.DataFrame()
 pitcher_arsenal_all = pd.DataFrame()
 if use_pitch_match:
@@ -132,7 +125,7 @@ if use_umpire:
 
 
 # ---------------------------------------------------------------------------
-# Header
+# Main Header
 # ---------------------------------------------------------------------------
 
 st.title(f"⚾ MLB Props — {selected_date.strftime('%A, %B %d, %Y')}")
@@ -140,13 +133,54 @@ st.caption(f"{len(slate)} games · {len(hitter_stats)} hitters · {len(pitcher_s
 
 
 # ---------------------------------------------------------------------------
-# Precompute per-game context
+# Quick Reference Dashboard Legend (Incorporated Legend)
+# ---------------------------------------------------------------------------
+
+with st.expander("📖 Dashboard Metric Legend & Quick Reference Guide", expanded=False):
+    st.markdown("### How to read the Data Grids")
+    st.caption("Use this guide to quickly interpret the color-coded models and advanced Statcast abbreviations.")
+    
+    leg_col1, leg_col2, leg_col3 = st.columns(3)
+    
+    with leg_col1:
+        st.markdown("**🟢 Betting Color Signals**")
+        st.markdown(
+            "- **Green (🟢 Strong Play):** High-percentile model match. Matchup factors heavily favor an 'Over' or breakout performance.\n"
+            "- **Yellow (🟡 Neutral / Lean):** Solid baseline data matching historical season pace, but lacks extreme environmental or matchup signals.\n"
+            "- **Red (🔴 Fade / Under):** Poor matchup fit, negative park/weather traits, or high-risk splits. Candidate to stay under line."
+        )
+        st.markdown("**📈 Primary Betting Metrics**")
+        st.markdown(
+            "- **HR Game%:** The calculated, environment-adjusted probability that a hitter hits 1 or more home runs today.\n"
+            "- **Proj K / Range:** The projected strikeout ceiling and basement for a starting pitcher based on umpire zones, framing, and lineup trends."
+        )
+
+    with leg_col2:
+        st.markdown("**🔥 Advanced Hitter Metrics**")
+        st.markdown(
+            "- **ISO (Isolated Power):** Measures raw power by calculating extra-base hits per at-bat ($SLG - BA$). Greater than .200 is excellent.\n"
+            "- **xwOBA (Expected Weighted On-Base Average):** Formulated using Statcast launch angle and exit velocity. Tells you how well a batter is *actually* hitting regardless of defensive luck.\n"
+            "- **xwOBAcon:** Expected weighted on-base average strictly on *contact* (excluding walks and strikeouts). Tracks pure hard-hit quality.\n"
+            "- **Brl% (Barrel %):** Percent of batted balls hit with the perfect combination of exit velocity and launch angle (the sweet spot for HRs)."
+        )
+
+    with leg_col3:
+        st.markdown("**💎 Advanced Pitcher & Context Metrics**")
+        st.markdown(
+            "- **Pitch Match:** A custom matching score tracking how well today's lineup handles this specific pitcher's signature pitch arsenal.\n"
+            "- **kHR Matrix:** A weighted metric cross-referencing a pitcher's home run allowance rate against the lineup's collective power depth.\n"
+            "- **Whiff% / CSW%:** The percentage of empty swings per swing (Whiff) and Called Strikes + Whiffs (CSW). Crucial indicators for betting K props.\n"
+            "- **HR Mult:** Environmental factor combining real-time wind speed, temperature, humidity, and individual park dimensions (1.00× is neutral)."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Precompute per-game context & build isolated matchups
 # ---------------------------------------------------------------------------
 
 game_context_map = {}
-all_prop_rows = []
+progress = st.progress(0.0, text="Assembling game environments...")
 
-progress = st.progress(0.0, text="Building game contexts...")
 for idx, (_, game) in enumerate(slate.iterrows()):
     progress.progress((idx + 1) / len(slate), text=f"Game {idx+1}/{len(slate)}")
 
@@ -157,7 +191,6 @@ for idx, (_, game) in enumerate(slate.iterrows()):
     park_mult = park.get("hr_factor", 100) / 100.0
     full_hr_mult = wx_mult * park_mult
 
-    # Vegas implied totals
     vegas_row = None
     if not vegas_df.empty:
         match = vegas_df[
@@ -167,10 +200,8 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         if len(match):
             vegas_row = match.iloc[0].to_dict()
 
-    # Umpire
     ump = get_umpire_for_game(int(game["gamePk"])) if use_umpire else {"name": "TBD", "k_factor": 1.0, "bb_factor": 1.0}
 
-    # Lineups (fallback to active roster)
     away_lineup = get_lineup(int(game["gamePk"]), "away") or [
         {"id": p["id"], "name": p["name"], "position": p["position"]}
         for p in get_team_roster(int(game["away_team_id"]))[:9]
@@ -180,16 +211,13 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         for p in get_team_roster(int(game["home_team_id"]))[:9]
     ]
 
-    # Pitcher rows
     away_p = pitcher_stats[pitcher_stats["player_id"] == game["away_pitcher_id"]]
     home_p = pitcher_stats[pitcher_stats["player_id"] == game["home_pitcher_id"]]
     away_p_row = away_p.iloc[0].to_dict() if len(away_p) else {}
     home_p_row = home_p.iloc[0].to_dict() if len(home_p) else {}
 
-    # Pitcher recent form + workload
     if use_recent_form:
-        for side, pid in [("away", game["away_pitcher_id"]),
-                          ("home", game["home_pitcher_id"])]:
+        for side, pid in [("away", game["away_pitcher_id"]), ("home", game["home_pitcher_id"])]:
             if pid and not pd.isna(pid):
                 recent = get_pitcher_recent_form(int(pid))
                 workload = get_pitcher_workload(int(pid))
@@ -197,8 +225,6 @@ for idx, (_, game) in enumerate(slate.iterrows()):
                 row_dict.update(recent)
                 row_dict.update(workload)
 
-    
-    # Hitter recent form
     away_recent = {}
     home_recent = {}
     if use_recent_form:
@@ -209,7 +235,6 @@ for idx, (_, game) in enumerate(slate.iterrows()):
             if p.get("id"):
                 home_recent[p["id"]] = get_hitter_recent_form_trad(int(p["id"]))
 
-    # Build matchup tables
     away_matchup = build_matchup_table(
         away_lineup, pd.Series(home_p_row) if home_p_row else None,
         hitter_stats, pitcher_stats, recent_form_dict=away_recent,
@@ -219,36 +244,22 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         hitter_stats, pitcher_stats, recent_form_dict=home_recent,
     )
 
-    # Pitch match scores (Updated with bulletproof columns check)
     if use_pitch_match and not pitcher_arsenal_all.empty and not hitter_pitch_arsenal.empty:
-        away_pm = lineup_pitch_match(
-            away_lineup, game["home_pitcher_id"],
-            hitter_pitch_arsenal, pitcher_arsenal_all,
-        )
-        home_pm = lineup_pitch_match(
-            home_lineup, game["away_pitcher_id"],
-            hitter_pitch_arsenal, pitcher_arsenal_all,
-        )
+        away_pm = lineup_pitch_match(away_lineup, game["home_pitcher_id"], hitter_pitch_arsenal, pitcher_arsenal_all)
+        home_pm = lineup_pitch_match(home_lineup, game["away_pitcher_id"], hitter_pitch_arsenal, pitcher_arsenal_all)
         
         pm_target_cols = ["player_id", "pitch_match_score", "best_pitch", "best_pitch_xwoba", "worst_pitch", "weighted_xwoba"]
         
         if not away_pm.empty and not away_matchup.empty:
             away_pm_keep = [col for col in pm_target_cols if col in away_pm.columns]
             if "player_id" in away_pm_keep:
-                away_matchup = away_matchup.merge(
-                    away_pm[away_pm_keep],
-                    on="player_id", how="left",
-                )
+                away_matchup = away_matchup.merge(away_pm[away_pm_keep], on="player_id", how="left")
                 
         if not home_pm.empty and not home_matchup.empty:
             home_pm_keep = [col for col in pm_target_cols if col in home_pm.columns]
             if "player_id" in home_pm_keep:
-                home_matchup = home_matchup.merge(
-                    home_pm[home_pm_keep],
-                    on="player_id", how="left",
-                )
+                home_matchup = home_matchup.merge(home_pm[home_pm_keep], on="player_id", how="left")
 
-    # Layer on sleeper / GS / HR prob (existing system - kept for backward compat)
     away_matchup = hr_probability(away_matchup, pd.Series(home_p_row) if home_p_row else None, full_hr_mult)
     home_matchup = hr_probability(home_matchup, pd.Series(away_p_row) if away_p_row else None, full_hr_mult)
     away_matchup = find_sleepers(away_matchup, season_hr_col="home_run")
@@ -256,58 +267,37 @@ for idx, (_, game) in enumerate(slate.iterrows()):
     away_matchup = grand_slam_probability(away_matchup, pd.Series(home_p_row) if home_p_row else None, full_hr_mult)
     home_matchup = grand_slam_probability(home_matchup, pd.Series(away_p_row) if away_p_row else None, full_hr_mult)
 
-    # NEW: Calibrated HR probability per hitter (the prop-betting number)
-    for matchup_df, opp_p_row, opp_p_id in [
-        (away_matchup, home_p_row, game["home_pitcher_id"]),
-        (home_matchup, away_p_row, game["away_pitcher_id"]),
-    ]:
+    for matchup_df, opp_p_row in [(away_matchup, home_p_row), (home_matchup, away_p_row)]:
         if matchup_df.empty:
             continue
-        hr_pa_list = []
-        hr_game_list = []
-        verdict_list = []
+        hr_pa_list, hr_game_list, verdict_list = [], [], []
         for _, hrow in matchup_df.iterrows():
             ph_factor = park_hand_factor(game.get("venue", ""), hrow.get("bats", ""))
             ttop = ttop_multiplier(hrow.get("lineup_pos", 5))
             pm_score = hrow.get("pitch_match_score") if "pitch_match_score" in matchup_df.columns else None
             p_pa = hr_prob_per_pa(
-                hitter_row=hrow.to_dict(),
-                pitcher_row=opp_p_row,
-                park_factor=park_mult,
-                park_hand_factor=ph_factor,
-                weather_mult=wx_mult,
-                pitch_match_score=pm_score,
-                ttop_mult=ttop,
-                defense_factor=1.0,
+                hitter_row=hrow.to_dict(), pitcher_row=opp_p_row,
+                park_factor=park_mult, park_hand_factor=ph_factor,
+                weather_mult=wx_mult, pitch_match_score=pm_score, ttop_mult=ttop, defense_factor=1.0
             )
             p_game = hr_prob_full_game(p_pa, expected_pa=4.3 if hrow.get("lineup_pos", 5) <= 5 else 3.8)
             hr_pa_list.append(round(p_pa * 100, 2))
             hr_game_list.append(round(p_game * 100, 1))
-            # Verdict: combined matchup + HR prob
             avg_score = ((hrow.get("matchup", 50) or 50) + p_game * 200) / 2
             verdict_list.append(verdict_color(avg_score, scale=(45, 65)))
         matchup_df["hr_pa_pct"] = hr_pa_list
         matchup_df["hr_game_pct"] = hr_game_list
         matchup_df["verdict"] = verdict_list
 
-    # Calibrated K projection per pitcher
     away_lineup_k_pct = away_matchup["k_pct"].mean() if "k_pct" in away_matchup.columns and not away_matchup.empty else 22
     home_lineup_k_pct = home_matchup["k_pct"].mean() if "k_pct" in home_matchup.columns and not home_matchup.empty else 22
 
-    away_k_proj = k_total_projection(
-        away_p_row, home_lineup_k_pct,
-        ump_k_factor=ump.get("k_factor", 1.0),
-    ) if away_p_row else {}
-    home_k_proj = k_total_projection(
-        home_p_row, away_lineup_k_pct,
-        ump_k_factor=ump.get("k_factor", 1.0),
-    ) if home_p_row else {}
+    away_k_proj = k_total_projection(away_p_row, home_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if away_p_row else {}
+    home_k_proj = k_total_projection(home_p_row, away_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if home_p_row else {}
 
-    # Extract framing metrics with a safe dict default to prevent KeyError down the line
-    ctx = {
+    game_context_map[game["gamePk"]] = {
         "park": park, "weather": weather, "wx_mult": wx_mult, "park_mult": park_mult,
-        "hr_mult": full_hr_mult, "summary": wx_summary,
-        "vegas": vegas_row, "ump": ump,
+        "hr_mult": full_hr_mult, "summary": wx_summary, "vegas": vegas_row, "ump": ump,
         "away_lineup": away_lineup, "home_lineup": home_lineup,
         "away_p_row": away_p_row, "home_p_row": home_p_row,
         "away_matchup": away_matchup, "home_matchup": home_matchup,
@@ -315,167 +305,15 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         "away_framing": away_p_row.get("catcher_framing_k_factor", 1.0),
         "home_framing": home_p_row.get("catcher_framing_k_factor", 1.0),
     }
-    game_context_map[game["gamePk"]] = ctx
-
-    # Collect for top prop edges section
-    for df_, opp_pitcher, opp_pitcher_row in [
-        (away_matchup, game["home_pitcher"], home_p_row),
-        (home_matchup, game["away_pitcher"], away_p_row),
-    ]:
-        if df_.empty:
-            continue
-        x = df_.copy()
-        x["game"] = f"{game['away_team_abbr']} @ {game['home_team_abbr']}"
-        x["opp_pitcher"] = opp_pitcher
-        x["venue"] = game.get("venue", "")
-        x["wx"] = wx_summary
-        x["vegas_total"] = vegas_row.get("total") if vegas_row else None
-        x["pitcher_hand"] = opp_pitcher_row.get("p_throws", "—") if opp_pitcher_row else "—"
-        all_prop_rows.append(x)
 
 progress.empty()
 
 
 # ---------------------------------------------------------------------------
-# TOP PROP EDGES — most important section for prop bettors
+# 📋 Slate Summary — Starting Pitchers
 # ---------------------------------------------------------------------------
 
-st.subheader("💰 Top Prop Edges Today")
-st.caption(
-    "Most actionable plays based on the model. **HR Game%** = chance of "
-    "hitting ≥1 HR. **K Proj** = projected K total. "
-    "🟢 = strong play · 🟡 = lean · 🔴 = fade. "
-    "Compare these against sportsbook lines for edge."
-)
-
-if all_prop_rows:
-    combined = pd.concat(all_prop_rows, ignore_index=True)
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.markdown("**⚾ Best HR Plays**")
-        st.caption("Sorted by HR Game%. Compare to book's HR price.")
-        hr_cols = ["verdict", "player_name", "game", "opp_pitcher", "pitcher_hand",
-                   "hr_game_pct", "hr_pa_pct", "home_run", "barrel_pct",
-                   "pitch_match_score", "best_pitch", "wx", "vegas_total"]
-        keep = [c for c in hr_cols if c in combined.columns]
-        hr_df = combined[keep].copy().sort_values("hr_game_pct", ascending=False).head(20)
-        hr_df = hr_df.rename(columns={
-            "verdict": "", "player_name": "Hitter", "game": "Game",
-            "opp_pitcher": "vs", "pitcher_hand": "T",
-            "hr_game_pct": "HR Game%", "hr_pa_pct": "HR PA%",
-            "home_run": "Season HR", "barrel_pct": "Brl%",
-            "pitch_match_score": "Pitch Match", "best_pitch": "Best Pitch",
-            "wx": "Conditions", "vegas_total": "O/U",
-        })
-        # Format & color (Updated with na_rep to protect against missing data crashes)
-        green = [c for c in ["HR Game%", "HR PA%", "Brl%", "Pitch Match"] if c in hr_df.columns]
-        sty = hr_df.style
-        if green:
-            sty = sty.background_gradient(cmap="RdYlGn", subset=green)
-        sty = sty.format({
-            "HR Game%": "{:.1f}%", "HR PA%": "{:.2f}%",
-            "Brl%": "{:.1f}%", "Pitch Match": "{:.1f}",
-            "O/U": "{:.1f}",
-        }, na_rep="—")
-        st.dataframe(sty, hide_index=True, use_container_width=True, height=620)
-
-    with col_b:
-        st.markdown("**🔥 Best K Plays (Pitchers)**")
-        st.caption("Projected K range. Compare to book's K O/U line.")
-        k_rows = []
-        for gpk, ctx in game_context_map.items():
-            game = slate[slate["gamePk"] == gpk].iloc[0]
-            for side in ("away", "home"):
-                p_proj = ctx[f"{side}_k_proj"]
-                p_row = ctx[f"{side}_p_row"]
-                if not p_proj or p_proj.get("mean") is None:
-                    continue
-                k_rows.append({
-                    "verdict": verdict_color(p_proj["mean"] * 10),  # 7 K = 70 score-ish
-                    "Pitcher": game[f"{side}_pitcher"],
-                    "Team": game[f"{side}_team_abbr"],
-                    "vs": game[f"{'home' if side == 'away' else 'away'}_team_abbr"],
-                    "Proj K": p_proj["mean"],
-                    "Range": f"{p_proj['low']:.1f}-{p_proj['high']:.1f}",
-                    "Blend K/9": p_proj.get("blended_k9"),
-                    "Opp K%": round(p_proj.get("lineup_adj", 1) * 22, 1),
-                    "P(O 5.5)": p_proj.get("p_over_5.5"),
-                    "P(O 6.5)": p_proj.get("p_over_6.5"),
-                    "P(O 7.5)": p_proj.get("p_over_7.5"),
-                    "P(O 8.5)": p_proj.get("p_over_8.5"),
-                    "Ump": ctx["ump"].get("name", "TBD")[:18],
-                })
-        if k_rows:
-            k_df = pd.DataFrame(k_rows).sort_values("Proj K", ascending=False).head(20)
-            sty = k_df.style.background_gradient(
-                cmap="RdYlGn",
-                subset=[c for c in ["Proj K", "Blend K/9",
-                                     "P(O 5.5)", "P(O 6.5)", "P(O 7.5)", "P(O 8.5)"]
-                        if c in k_df.columns]
-            ).format({
-                "Proj K": "{:.1f}", "Blend K/9": "{:.2f}",
-                "Opp K%": "{:.1f}%",
-                "P(O 5.5)": "{:.0%}", "P(O 6.5)": "{:.0%}",
-                "P(O 7.5)": "{:.0%}", "P(O 8.5)": "{:.0%}",
-            }, na_rep="—")
-            st.dataframe(sty, hide_index=True, use_container_width=True, height=620)
-
-st.divider()
-
-
-# ---------------------------------------------------------------------------
-# Slate Highlights — sleepers and GS (kept from earlier versions)
-# ---------------------------------------------------------------------------
-
-with st.expander("🎯 Slate Highlights — Sleepers & Grand Slam Candidates", expanded=False):
-    combined = pd.concat(all_prop_rows, ignore_index=True) if all_prop_rows else pd.DataFrame()
-    if not combined.empty:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("**🌙 Sleeper HR Picks**")
-            st.caption("Today's HR conditions exceed their season pace.")
-            cols = ["verdict", "player_name", "game", "opp_pitcher",
-                    "sleeper_score", "hr_game_pct", "home_run", "wx"]
-            keep = [c for c in cols if c in combined.columns]
-            s_df = combined[combined.get("is_sleeper", False)][keep].copy()
-            s_df = s_df.sort_values("sleeper_score", ascending=False).head(15)
-            s_df = s_df.rename(columns={
-                "verdict": "", "player_name": "Hitter", "game": "Game",
-                "opp_pitcher": "vs", "sleeper_score": "Sleeper",
-                "hr_game_pct": "HR%", "home_run": "HR", "wx": "Conditions",
-            })
-            if not s_df.empty:
-                sty = s_df.style.background_gradient(
-                    cmap="RdYlGn",
-                    subset=[c for c in ["Sleeper", "HR%"] if c in s_df.columns]
-                ).format({"Sleeper": "{:.1f}", "HR%": "{:.1f}%"}, na_rep="—")
-                st.dataframe(sty, hide_index=True, use_container_width=True, height=480)
-
-        with c2:
-            st.markdown("**🎰 Grand Slam Candidates**")
-            cols = ["verdict", "player_name", "game", "opp_pitcher",
-                    "gs_score", "lineup_pos", "hr_game_pct"]
-            keep = [c for c in cols if c in combined.columns]
-            gs = combined[keep].copy().sort_values("gs_score", ascending=False).head(15)
-            gs = gs.rename(columns={
-                "verdict": "", "player_name": "Hitter", "game": "Game",
-                "opp_pitcher": "vs", "gs_score": "GS Score",
-                "lineup_pos": "Slot", "hr_game_pct": "HR%",
-            })
-            sty = gs.style.background_gradient(
-                cmap="RdYlGn",
-                subset=[c for c in ["GS Score", "HR%"] if c in gs.columns]
-            ).format({"GS Score": "{:.2f}", "HR%": "{:.1f}%"}, na_rep="—")
-            st.dataframe(sty, hide_index=True, use_container_width=True, height=480)
-
-
-# ---------------------------------------------------------------------------
-# Slate Summary — pitcher rankings
-# ---------------------------------------------------------------------------
-
-st.subheader("📋 Slate Summary — Starting Pitchers")
+st.subheader("📋 Starting Pitcher Overview")
 pitcher_slate = build_pitcher_slate(slate, pitcher_stats, {
     int(pid): {"recent_era": ctx[f"{side}_p_row"].get("recent_era"),
                 "recent_k9": ctx[f"{side}_p_row"].get("recent_k9"),
@@ -488,330 +326,183 @@ pitcher_slate = build_pitcher_slate(slate, pitcher_stats, {
 })
 
 if not pitcher_slate.empty:
-    # Add verdict column
-    pitcher_slate["verdict"] = pitcher_slate["test_score"].apply(
-        lambda x: verdict_color(x, scale=(45, 65))
-    )
+    pitcher_slate["verdict"] = pitcher_slate["test_score"].apply(lambda x: verdict_color(x, scale=(45, 65)))
     cols_show = ["verdict", "pitcher_name", "team", "home_away", "opp", "throws",
                  "test_score", "kHR", "proj_k", "form_arrow",
-                 "era", "whip", "k9", "bb9", "hr9",
-                 "k_pct", "whiff_pct", "csw_pct",
-                 "xwoba_allowed", "barrel_allowed",
-                 "recent_era", "recent_k9", "days_rest", "avg_recent_pitches"]
+                 "era", "whip", "k9", "bb9", "hr9", "k_pct", "whiff_pct", "csw_pct",
+                 "xwoba_allowed", "barrel_allowed", "recent_era", "recent_k9", "days_rest", "avg_recent_pitches"]
     display = pitcher_slate[[c for c in cols_show if c in pitcher_slate.columns]].rename(columns={
-        "verdict": "", "pitcher_name": "Pitcher", "team": "Tm", "home_away": "",
-        "opp": "Opp", "throws": "T", "test_score": "Test", "kHR": "kHR",
-        "proj_k": "Proj K", "form_arrow": "Trend",
+        "verdict": "", "pitcher_name": "Pitcher", "team": "Tm", "home_away": "", "opp": "Opp", "throws": "T",
+        "test_score": "Test", "kHR": "kHR", "proj_k": "Proj K", "form_arrow": "Trend",
         "era": "ERA", "whip": "WHIP", "k9": "K/9", "bb9": "BB/9", "hr9": "HR/9",
-        "k_pct": "K%", "whiff_pct": "Whiff%", "csw_pct": "CSW%",
-        "xwoba_allowed": "xwOBA", "barrel_allowed": "Brl%",
-        "recent_era": "L5 ERA", "recent_k9": "L5 K/9",
-        "days_rest": "Rest", "avg_recent_pitches": "Pitches",
+        "k_pct": "K%", "whiff_pct": "Whiff%", "csw_pct": "CSW%", "xwoba_allowed": "xwOBA", "barrel_allowed": "Brl%",
+        "recent_era": "L5 ERA", "recent_k9": "L5 K/9", "days_rest": "Rest", "avg_recent_pitches": "Pitches",
     })
-    green = [c for c in ["Test", "kHR", "Proj K", "K/9", "K%", "Whiff%", "CSW%", "L5 K/9"]
-             if c in display.columns]
-    red = [c for c in ["ERA", "WHIP", "BB/9", "HR/9", "xwOBA", "Brl%", "L5 ERA"]
-           if c in display.columns]
-    sty = display.style.background_gradient(cmap="RdYlGn", subset=green)
-    if red:
-        sty = sty.background_gradient(cmap="RdYlGn_r", subset=red)
+    
+    # SlateFix style guard lookup
+    green_p = [c for c in ["Test", "kHR", "Proj K", "K/9", "K%", "Whiff%", "CSW%", "L5 K/9"] if c in display.columns]
+    red_p = [c for c in ["ERA", "WHIP", "BB/9", "HR/9", "xwOBA", "Brl%", "L5 ERA"] if c in display.columns]
+    
+    sty = display.style
+    if green_p:
+        sty = sty.background_gradient(cmap="RdYlGn", subset=green_p)
+    if red_p:
+        sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_p)
+        
     sty = sty.format({
         **{c: "{:.1f}" for c in ["Test", "kHR", "Proj K", "K%", "Whiff%", "CSW%", "Brl%"] if c in display.columns},
         **{c: "{:.2f}" for c in ["ERA", "WHIP", "K/9", "BB/9", "HR/9", "L5 ERA", "L5 K/9"] if c in display.columns},
-        "xwOBA": "{:.3f}",
-        "Rest": "{:.0f}d", "Pitches": "{:.0f}",
+        "xwOBA": "{:.3f}", "Rest": "{:.0f}d", "Pitches": "{:.0f}",
     }, na_rep="—")
-    st.dataframe(sty, hide_index=True, use_container_width=True, height=420)
-
+    st.dataframe(sty, hide_index=True, use_container_width=True, height=350)
 
 st.divider()
 
 
 # ---------------------------------------------------------------------------
-# Per-game tabs
+# 🎮 Game Breakdowns Section (Now isolated game by game)
 # ---------------------------------------------------------------------------
 
-st.subheader("🎮 Game Breakdowns")
+st.subheader("🎮 Isolated Game-by-Game Matchups")
+st.caption("Every active position player mapped directly to today's starting pitcher. Columns are color-weighted dynamically.")
 
-
-def _render_matchup(df: pd.DataFrame, title: str = ""):
-    """Render hitter table with full column set + verdict."""
+def _render_isolated_matchup(df: pd.DataFrame):
+    """Render hitter grid using localized layout settings."""
     if df is None or df.empty:
-        st.write("No matchup data")
+        st.write("No roster or lineup data compiled.")
         return
 
     show_cols = [
         "verdict", "player_name", "lineup_pos", "bats", "position",
-        # Calibrated prop numbers (most important)
-        "hr_game_pct", "hr_pa_pct",
-        # Composites
-        "matchup", "test_score", "ceiling", "zone_fit",
-        "hr_form_label", "kHR",
-        # Pitch match
+        "hr_game_pct", "hr_pa_pct", "matchup", "test_score", "barrel_pct", "iso", "xwoba", "xwobacon",
         "pitch_match_score", "best_pitch", "best_pitch_xwoba", "worst_pitch",
-        # Stats
-        "iso", "xwoba", "xwobacon",
-        "barrel_pct", "pulled_brl_pct", "hard_hit", "sweet_spot_pct",
-        "fb_pct", "la", "k_pct", "bb_pct", "whiff_pct",
-        "home_run", "recent_hr", "recent_iso",
-        "sleeper_score", "gs_score",
+        "fb_pct", "la", "k_pct", "bb_pct", "whiff_pct", "home_run", "recent_hr", "sleeper_score", "gs_score",
     ]
     keep = [c for c in show_cols if c in df.columns]
     display = df[keep].copy().rename(columns={
-        "verdict": "", "player_name": "Hitter", "lineup_pos": "#",
-        "position": "Pos", "bats": "B",
-        "hr_game_pct": "HR Game%", "hr_pa_pct": "HR PA%",
-        "matchup": "Matchup", "test_score": "Test", "ceiling": "Ceiling",
-        "zone_fit": "Zone Fit", "hr_form_label": "HR Form", "kHR": "kHR",
-        "pitch_match_score": "Pitch Match", "best_pitch": "Best Pitch",
-        "best_pitch_xwoba": "Best xwOBA", "worst_pitch": "Worst Pitch",
-        "iso": "ISO", "xwoba": "xwOBA", "xwobacon": "xwOBAcon",
-        "barrel_pct": "Brl%", "pulled_brl_pct": "PulledBrl%",
-        "hard_hit": "HH%", "sweet_spot_pct": "SwSpot%",
-        "fb_pct": "FB%", "la": "LA",
-        "k_pct": "K%", "bb_pct": "BB%", "whiff_pct": "Whiff%",
-        "home_run": "HR", "recent_hr": "L15 HR", "recent_iso": "L15 ISO",
-        "sleeper_score": "Sleeper", "gs_score": "GS",
+        "verdict": "", "player_name": "Hitter", "lineup_pos": "#", "position": "Pos", "bats": "B",
+        "hr_game_pct": "HR Game%", "hr_pa_pct": "HR PA%", "matchup": "Matchup", "test_score": "Test",
+        "barrel_pct": "Brl%", "iso": "ISO", "xwoba": "xwOBA", "xwobacon": "xwOBAcon",
+        "pitch_match_score": "Pitch Match", "best_pitch": "Best Pitch", "best_pitch_xwoba": "Best xwOBA", "worst_pitch": "Worst Pitch",
+        "fb_pct": "FB%", "la": "LA", "k_pct": "K%", "bb_pct": "BB%", "whiff_pct": "Whiff%",
+        "home_run": "HR", "recent_hr": "L15 HR", "sleeper_score": "Sleeper", "gs_score": "GS",
     })
 
-    green = [c for c in ["HR Game%", "HR PA%", "Matchup", "Test", "Ceiling",
-                          "Zone Fit", "kHR", "Pitch Match", "ISO", "xwOBA", "xwOBAcon",
-                          "Brl%", "PulledBrl%", "HH%", "SwSpot%", "FB%",
-                          "BB%", "HR", "L15 HR", "Sleeper", "GS"]
-             if c in display.columns]
-    red = [c for c in ["K%", "Whiff%"] if c in display.columns]
+    green_m = [c for c in ["HR Game%", "HR PA%", "Matchup", "Test", "Pitch Match", "ISO", "xwOBA", "xwOBAcon",
+                           "Brl%", "FB%", "BB%", "HR", "L15 HR", "Sleeper", "GS"] if c in display.columns]
+    red_m = [c for c in ["K%", "Whiff%"] if c in display.columns]
 
     sty = display.style
-    if green:
-        sty = sty.background_gradient(cmap="RdYlGn", subset=green)
-    if red:
-        sty = sty.background_gradient(cmap="RdYlGn_r", subset=red)
+    if green_m:
+        sty = sty.background_gradient(cmap="RdYlGn", subset=green_m)
+    if red_m:
+        sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_m)
+        
     sty = sty.format({
-        **{c: "{:.1f}" for c in ["Matchup", "Test", "Ceiling", "kHR",
-                                  "Pitch Match", "Sleeper"] if c in display.columns},
-        "HR Game%": "{:.1f}%", "HR PA%": "{:.2f}%",
-        "GS": "{:.2f}", "Zone Fit": "{:.3f}",
-        "ISO": "{:.3f}", "xwOBA": "{:.3f}", "xwOBAcon": "{:.3f}",
-        "L15 ISO": "{:.3f}", "Best xwOBA": "{:.3f}",
-        "Brl%": "{:.1f}%", "PulledBrl%": "{:.1f}%",
-        "HH%": "{:.1f}%", "SwSpot%": "{:.1f}%", "FB%": "{:.1f}%",
-        "K%": "{:.1f}%", "BB%": "{:.1f}%", "Whiff%": "{:.1f}%",
-        "LA": "{:.1f}",
+        **{c: "{:.1f}" for c in ["Matchup", "Test", "Pitch Match", "Sleeper"] if c in display.columns},
+        "HR Game%": "{:.1f}%", "HR PA%": "{:.2f}%", "GS": "{:.2f}",
+        "ISO": "{:.3f}", "xwOBA": "{:.3f}", "xwOBAcon": "{:.3f}", "Best xwOBA": "{:.3f}",
+        "Brl%": "{:.1f}%", "FB%": "{:.1f}%", "K%": "{:.1f}%", "BB%": "{:.1f}%", "Whiff%": "{:.1f}%", "LA": "{:.1f}",
     }, na_rep="—")
-    if title:
-        st.markdown(f"#### {title}")
     st.dataframe(sty, hide_index=True, use_container_width=True)
 
-
-def _label(row):
+def _get_label_string(row):
     try:
         t = pd.to_datetime(row["gameTime"]).tz_convert("US/Eastern")
-        t_str = t.strftime("%-I:%M %p ET")
+        return f"🏟️ {row['away_team_abbr']} @ {row['home_team_abbr']} ({t.strftime('%-I:%M %p ET')})"
     except Exception:
-        t_str = "TBD"
-    return f"{row['away_team_abbr']} @ {row['home_team_abbr']} · {t_str}"
+        return f"🏟️ {row['away_team_abbr']} @ {row['home_team_abbr']}"
 
-
-tabs = st.tabs([_label(r) for _, r in slate.iterrows()])
-
-for tab, (_, game) in zip(tabs, slate.iterrows()):
-    with tab:
-        ctx = game_context_map[game["gamePk"]]
-        park = ctx["park"]
-        vegas = ctx.get("vegas") or {}
-        ump = ctx.get("ump", {})
-
-        # Top metrics row
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric(f"Away ({game['away_team_abbr']})",
-                  game["away_pitcher"] or "TBD",
-                  delta=f"Proj K: {ctx['away_k_proj'].get('mean', '—')}")
-        m2.metric(f"Home ({game['home_team_abbr']})",
-                  game["home_pitcher"] or "TBD",
-                  delta=f"Proj K: {ctx['home_k_proj'].get('mean', '—')}")
-        m3.metric("HR Mult", f"{ctx['hr_mult']:.2f}×",
-                  delta=f"{(ctx['hr_mult'] - 1) * 100:+.0f}%")
+# Create isolated views inside expanding container panels for each game
+for _, game in slate.iterrows():
+    ctx = game_context_map[game["gamePk"]]
+    park = ctx["park"]
+    vegas = ctx.get("vegas") or {}
+    ump = ctx.get("ump", {})
+    
+    panel_title = _get_label_string(game)
+    
+    with st.container(border=True):
+        st.markdown(f"### {panel_title}")
+        
+        # Environmental and Market Data Row
+        env1, env2, env3, env4, env5 = st.columns(5)
+        env1.metric(f"Away Starter ({game['away_team_abbr']})", game["away_pitcher"] or "TBD", delta=f"Proj K: {ctx['away_k_proj'].get('mean', '—')}")
+        env2.metric(f"Home Starter ({game['home_team_abbr']})", game["home_pitcher"] or "TBD", delta=f"Proj K: {ctx['home_k_proj'].get('mean', '—')}")
+        env3.metric("Weather Multiplier", f"{ctx['hr_mult']:.2f}×", delta=f"{(ctx['hr_mult'] - 1) * 100:+.0f}% Impact")
+        
         if vegas and vegas.get("total"):
-            m4.metric("Vegas Total", f"{vegas['total']:.1f}",
-                      delta=f"AT: {vegas.get('away_implied', '—')} | HT: {vegas.get('home_implied', '—')}")
+            env4.metric("Vegas Line (O/U)", f"{vegas['total']:.1f}", delta=f"Away Implied: {vegas.get('away_implied', '—')} | Home Implied: {vegas.get('home_implied', '—')}")
         else:
-            m4.metric("Vegas Total", "—")
-        m5.metric("HP Umpire", ump.get("name", "TBD")[:15])
+            env4.metric("Vegas Line (O/U)", "—")
+            
+        env5.metric("Plate Umpire", ump.get("name", "TBD")[:16])
 
-        with st.container(border=True):
-            cols = st.columns([3, 2])
-            with cols[0]:
-                roof = park.get("roof", "open")
-                st.markdown(
-                    f"📍 **{game.get('venue', 'TBD')}** ({roof}) · "
-                    f"Park HR: **{park.get('hr_factor', 100)}**"
-                )
-                st.markdown(f"🌤️ {ctx['summary'] or 'No weather data'}")
-            with cols[1]:
-                st.caption(
-                    f"**Catcher framing:** "
-                    f"Away C: {ctx['away_framing']:.2f}× · "
-                    f"Home C: {ctx['home_framing']:.2f}× K factor"
-                )
-
-        # Matchup tables
-        _render_matchup(
-            ctx["away_matchup"],
-            title=f"🏏 {game['away_team']} vs {game['home_pitcher']}"
+        # Stadium info sub-card
+        st.caption(
+            f"📍 **Venue:** {game.get('venue', 'TBD')} ({park.get('roof', 'open')})  ·  "
+            f"**Base Park HR Factor:** {park.get('hr_factor', 100)}  ·  "
+            f"**Atmospheric Context:** {ctx['summary'] or 'No wind data available'}  ·  "
+            f"**Catcher Framing Influence:** Away: {ctx['away_framing']:.2f}× / Home: {ctx['home_framing']:.2f}×"
         )
-        _render_matchup(
-            ctx["home_matchup"],
-            title=f"🏏 {game['home_team']} vs {game['away_pitcher']}"
-        )
-
-        # K projection detail card
-        st.markdown("#### 🎯 K Projection Detail")
-        kp1, kp2 = st.columns(2)
-        for col, side, label in [(kp1, "away", game["away_pitcher"]),
-                                  (kp2, "home", game["home_pitcher"])]:
-            with col:
-                p_proj = ctx[f"{side}_k_proj"]
-                if not p_proj or p_proj.get("mean") is None:
-                    col.write(f"**{label}** — no data")
-                    continue
-                col.markdown(
-                    f"**{label}** · Projected K: **{p_proj['mean']:.1f}** "
-                    f"(range {p_proj['low']:.1f}–{p_proj['high']:.1f})"
-                )
-                col.caption(
-                    f"Blended K/9: {p_proj['blended_k9']:.2f} · "
-                    f"Opp lineup adj: {p_proj['lineup_adj']:.2f}× · "
-                    f"Catcher framing: {ctx[f'{side}_framing']:.2f}×"
-                )
-                lines_df = pd.DataFrame([
-                    {"Line": "O 5.5", "Prob": p_proj.get("p_over_5.5", 0)},
-                    {"Line": "O 6.5", "Prob": p_proj.get("p_over_6.5", 0)},
-                    {"Line": "O 7.5", "Prob": p_proj.get("p_over_7.5", 0)},
-                    {"Line": "O 8.5", "Prob": p_proj.get("p_over_8.5", 0)},
-                ])
-                col.dataframe(
-                    lines_df.style.background_gradient(cmap="RdYlGn", subset=["Prob"])
-                    .format({"Prob": "{:.0%}"}, na_rep="—"),
-                    hide_index=True, use_container_width=True,
-                )
-
-        # Optional: BvP & similar arsenal
-        if use_bvp:
-            with st.expander("📜 Batter-vs-Pitcher + Similar Arsenal"):
-                st.caption(
-                    "Career BvP samples are usually too small to trust. "
-                    "'Similar Arsenal' aggregates BvP across 10 pitchers with "
-                    "most similar pitch mix — more reliable signal."
-                )
-                if not pitcher_arsenal_all.empty:
-                    similar_away = find_similar_pitchers(
-                        game["home_pitcher_id"], "", pitcher_arsenal_all, n=10
-                    ) if game["home_pitcher_id"] else []
-                    similar_home = find_similar_pitchers(
-                        game["away_pitcher_id"], "", pitcher_arsenal_all, n=10
-                    ) if game["away_pitcher_id"] else []
-
-                    for label, lineup, opp_pid, similar_pids in [
-                        (f"{game['away_team']} vs {game['home_pitcher']}",
-                         ctx["away_lineup"], game["home_pitcher_id"], similar_away),
-                        (f"{game['home_team']} vs {game['away_pitcher']}",
-                         ctx["home_lineup"], game["away_pitcher_id"], similar_home),
-                    ]:
-                        if not opp_pid:
-                            continue
-                        st.markdown(f"**{label}**")
-                        bvp = bvp_for_lineup(lineup, int(opp_pid))
-                        if not bvp.empty:
-                            sim_rows = []
-                            for p in lineup:
-                                if p.get("id") and similar_pids:
-                                    sim = hitter_vs_similar(int(p["id"]), similar_pids)
-                                    sim_rows.append({
-                                        "player_id": p["id"],
-                                        "sim_pa": sim.get("pa", 0),
-                                        "sim_avg": sim.get("avg", 0),
-                                        "sim_iso": sim.get("iso", 0),
-                                        "sim_hr": sim.get("hr", 0),
-                                    })
-                            if sim_rows:
-                                bvp = bvp.merge(pd.DataFrame(sim_rows), on="player_id", how="left")
-                            cols_keep = [c for c in [
-                                "player_name", "pa", "avg", "iso", "hr", "k_pct",
-                                "sim_pa", "sim_avg", "sim_iso", "sim_hr",
-                            ] if c in bvp.columns]
-                            st.dataframe(bvp[cols_keep], hide_index=True, use_container_width=True)
+        
+        # Dynamic Data Tabs for separate batting views
+        away_tab_title = f"🏏 {game['away_team_abbr']} Hitters vs {game['home_pitcher']}"
+        home_tab_title = f"🏏 {game['home_team_abbr']} Hitters vs {game['away_pitcher']}"
+        k_tab_title = "🎯 Pitcher Strikeout Projections"
+        
+        batting_tabs = st.tabs([away_tab_title, home_tab_title, k_tab_title])
+        
+        with batting_tabs[0]:
+            _render_isolated_matchup(ctx["away_matchup"])
+            
+        with batting_tabs[1]:
+            _render_isolated_matchup(ctx["home_matchup"])
+            
+        with batting_tabs[2]:
+            kp1, kp2 = st.columns(2)
+            for col, side, side_label in [(kp1, "away", game["away_pitcher"]), (kp2, "home", game["home_pitcher"])]:
+                with col:
+                    p_proj = ctx[f"{side}_k_proj"]
+                    if not p_proj or p_proj.get("mean") is None:
+                        st.write(f"**{side_label}** — Baseline data unavailable.")
+                        continue
+                    st.markdown(f"**{side_label}**  ·  Calculated Mean: **{p_proj['mean']:.1f} K** (Expected Variance: {p_proj['low']:.1f}–{p_proj['high']:.1f})")
+                    st.caption(f"Adjusted K/9: {p_proj['blended_k9']:.2f}  ·  Lineup Strikeout Rate Factor: {p_proj['lineup_adj']:.2f}×")
+                    
+                    lines_df = pd.DataFrame([
+                        {"Line Threshold": "Over 5.5 Strikeouts", "Probability Edge": p_proj.get("p_over_5.5", 0)},
+                        {"Line Threshold": "Over 6.5 Strikeouts", "Probability Edge": p_proj.get("p_over_6.5", 0)},
+                        {"Line Threshold": "Over 7.5 Strikeouts", "Probability Edge": p_proj.get("p_over_7.5", 0)},
+                        {"Line Threshold": "Over 8.5 Strikeouts", "Probability Edge": p_proj.get("p_over_8.5", 0)},
+                    ])
+                    st.dataframe(
+                        lines_df.style.background_gradient(cmap="RdYlGn", subset=["Probability Edge"])
+                        .format({"Probability Edge": "{:.0%}"}, na_rep="—"),
+                        hide_index=True, use_container_width=True
+                    )
+                    
+        # Optional Context Expanders localized strictly inside the game card
+        if use_bvp or not pitcher_arsenal_all.empty:
+            with st.expander("🔬 Supplemental Batter-vs-Pitcher & Arsenal Details", expanded=False):
+                sub_c1, sub_c2 = st.columns(2)
+                
+                with sub_c1:
+                    if use_bvp and game["home_pitcher_id"]:
+                        st.markdown(f"**{game['away_team_abbr']} Lineup History vs. Pitcher**")
+                        bvp_a = bvp_for_lineup(ctx["away_lineup"], int(game["home_pitcher_id"]))
+                        if not bvp_a.empty:
+                            st.dataframe(bvp_a, hide_index=True, use_container_width=True)
                         else:
-                            st.caption("No BvP data")
-
-        # Pitcher arsenal
-        with st.expander("📊 Pitcher Arsenals"):
-            if pitcher_arsenal_all.empty:
-                pitcher_arsenal_all_local = get_pitcher_arsenal()
-            else:
-                pitcher_arsenal_all_local = pitcher_arsenal_all
-            for p_name, p_id in [
-                (game["away_pitcher"], game["away_pitcher_id"]),
-                (game["home_pitcher"], game["home_pitcher_id"]),
-            ]:
-                if not p_id or pd.isna(p_id):
-                    continue
-                st.markdown(f"**{p_name}**")
-                a = pitcher_arsenal_all_local[
-                    pitcher_arsenal_all_local.get("player_id") == p_id
-                ] if "player_id" in pitcher_arsenal_all_local.columns else pd.DataFrame()
-                if len(a):
-                    summary_cols = [c for c in [
-                        "pitch_name", "pitch_usage", "pitches",
-                        "ba", "slg", "woba", "est_ba", "est_slg", "est_woba",
-                        "whiff_percent", "k_percent", "put_away",
-                        "hard_hit_percent",
-                    ] if c in a.columns]
-                    a_display = a[summary_cols].rename(columns={
-                        "pitch_name": "Pitch", "pitch_usage": "Usage%",
-                        "pitches": "Pitches", "ba": "BA", "slg": "SLG",
-                        "woba": "wOBA", "est_ba": "xBA", "est_slg": "xSLG",
-                        "est_woba": "xwOBA", "whiff_percent": "SwStr%",
-                        "k_percent": "K%", "put_away": "PutAway%",
-                        "hard_hit_percent": "HH%",
-                    })
-                    sty = a_display.style.background_gradient(
-                        cmap="RdYlGn_r",
-                        subset=[c for c in ["BA", "SLG", "wOBA", "xBA", "xSLG", "xwOBA", "HH%"] if c in a_display.columns]
-                    ).background_gradient(
-                        cmap="RdYlGn",
-                        subset=[c for c in ["SwStr%", "K%", "PutAway%"] if c in a_display.columns]
-                    ).format({
-                        "BA": "{:.3f}", "SLG": "{:.3f}", "wOBA": "{:.3f}",
-                        "xBA": "{:.3f}", "xSLG": "{:.3f}", "xwOBA": "{:.3f}",
-                        "Usage%": "{:.1f}%", "SwStr%": "{:.1f}%",
-                        "K%": "{:.1f}%", "PutAway%": "{:.1f}%", "HH%": "{:.1f}%",
-                    }, na_rep="—")
-                    st.dataframe(sty, hide_index=True, use_container_width=True)
-
-
-# ---------------------------------------------------------------------------
-# All Hitters Database (every team, not just lineups)
-# ---------------------------------------------------------------------------
-
-with st.expander("📚 All Hitters Database (every team on slate)"):
-    st.caption(
-        "Every active position player on every team in today's slate. "
-        "Use this to scan beyond the confirmed lineup. Sort by any column."
-    )
-    rosters = get_all_team_rosters(slate)
-    all_hitter_ids = set()
-    for r in rosters.values():
-        for p in r:
-            all_hitter_ids.add(p["id"])
-    db = hitter_stats[hitter_stats.get("player_id", pd.Series()).isin(all_hitter_ids)].copy() \
-        if "player_id" in hitter_stats.columns else pd.DataFrame()
-    if not db.empty:
-        cols_keep = [c for c in [
-            "player_name", "pa", "home_run", "iso", "xwoba", "xwobacon",
-            "barrel_pct", "barrel_batted_rate", "hard_hit", "hard_hit_percent",
-            "fb_pct", "flyballs_percent", "k_pct", "k_percent",
-            "bb_pct", "bb_percent", "sweet_spot_pct", "sweet_spot_percent",
-        ] if c in db.columns]
-        st.dataframe(db[cols_keep].sort_values("home_run", ascending=False)
-                     if "home_run" in db.columns else db[cols_keep],
-                     hide_index=True, use_container_width=True, height=500)
+                            st.caption("No historical head-to-head tracking found for this lineup split.")
+                            
+                with sub_c2:
+                    if not pitcher_arsenal_all.empty:
+                        for p_name, p_id in [(game["away_pitcher"], game["away_pitcher_id"]), (game["home_pitcher"], game["home_pitcher_id"])]:
+                            if p_id and pd.notna(p_id):
+                                st.markdown(f"**{p_name} Pitch Profiles**")
+                                a = pitcher_arsenal_all[pitcher_arsenal_all.get("player_id") == p_id] if "player_id" in pitcher_arsenal_all.columns else pd.DataFrame()
+                                if not a.empty:
+                                    summary_cols = [c for c in ["pitch_name", "pitch_usage", "ba", "slg", "woba", "whiff_percent"] if c in a.columns]
+                                    a_disp = a[summary_cols].rename(columns={"pitch_name": "Pitch", "pitch_usage": "Usage%", "whiff_percent": "Whiff%"})
+                                    st.dataframe(a_disp.style.format({"Usage%": "{:.1f}%", "Whiff%": "{:.1f}%"}, na_rep="—"), hide_index=True, use_container_width=True)
