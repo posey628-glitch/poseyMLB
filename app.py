@@ -252,8 +252,8 @@ for idx, (_, game) in enumerate(slate.iterrows()):
 
     # NEW: Calibrated HR probability per hitter (the prop-betting number)
     for matchup_df, opp_p_row, opp_p_id, framing_for_their_K in [
-        (away_matchup, home_p_row, game["home_pitcher_id"], home_framing_factor),
-        (home_matchup, away_p_row, game["away_pitcher_id"], away_framing_factor),
+        (away_matchup, home_p_row, game["home_pitcher_id"]),
+        (home_matchup, away_p_row, game["away_pitcher_id"]),
     ]:
         if matchup_df.empty:
             continue
