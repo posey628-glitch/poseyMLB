@@ -184,4 +184,3 @@ for g in slate.itertuples():
 
     with tab2:
         render(ctx["home"])
-``
