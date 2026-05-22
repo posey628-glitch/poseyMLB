@@ -659,7 +659,7 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-# --- ALL ORIGINAL IMPORTS ---
+# --- ORIGINAL IMPORTS ---
 from data_fetcher import (
     get_slate, get_lineup, get_team_roster, get_all_team_rosters,
     get_hitter_stats, get_pitcher_stats, get_pitcher_arsenal,
@@ -670,22 +670,16 @@ from models import build_matchup_table, build_pitcher_slate
 from park_factors import get_park
 from weather import fetch_weather, hr_multiplier
 from sleepers import hr_probability, find_sleepers, grand_slam_probability
-from splits import (
-    bvp_for_lineup, find_similar_pitchers, hitter_vs_similar,
-)
+from splits import bvp_for_lineup, find_similar_pitchers, hitter_vs_similar
 from pitch_match import get_hitter_pitch_arsenal, lineup_pitch_match
 from game_context import (
     get_umpire_for_game, get_catcher_framing, get_team_defense,
-    get_vegas_totals, get_pitcher_workload,
-    ttop_multiplier, park_hand_factor,
+    get_vegas_totals, get_pitcher_workload, ttop_multiplier, park_hand_factor,
 )
 from props import (
     hr_prob_per_pa, hr_prob_full_game, k_total_projection,
     verdict_color, edge_vs_market,
 )
-
-# Page Config
-st.set_page_config(page_title="Posey MLB HR & K Data", layout="wide", page_icon="⚾")
 
 # --- INTEGRATED ENGINES ---
 def calculate_4tier_emoji(score: float, scale=(45, 65)) -> str:
@@ -702,20 +696,11 @@ def impute_stats(df: pd.DataFrame, type="hitter"):
         if col in df.columns: df[col] = df[col].fillna(val)
     return df
 
-# --- RENDERER ---
-def _render_isolated_matchup(df: pd.DataFrame):
-    df = impute_stats(df, "hitter")
-    df["alert"] = df["test_score"].apply(lambda x: calculate_4tier_emoji(x))
-    st.dataframe(
-        df, use_container_width=True, height=325,
-        column_config={
-            "alert": st.column_config.TextColumn("Signal", help="4-Tier Matchup Alert: [🟢Elite, 🟡Pace, 🟠Caution, 🔴Fade]"),
-            "hr_game_pct": st.column_config.NumberColumn("HR Game%", format="%.1f%%", help="Prob of ≥1 HR"),
-            "iso": st.column_config.NumberColumn("ISO", format="%.3f", help="Isolated Power"),
-            "xwoba": st.column_config.NumberColumn("xwOBA", format="%.3f", help="Exp. Weighted On-Base"),
-            "la": st.column_config.NumberColumn("LA", format="%.1f°", help="Launch Angle"),
-        }
-    )
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Posey MLB HR & K Data", layout="wide", page_icon="⚾")
+
+# --- UI POLISH ---
+st.markdown("<style>div[data-testid='stMetric'] { min-height: 85px; }</style>", unsafe_allow_html=True)
 
 # --- SIDEBAR & LOAD ---
 with st.sidebar:
@@ -727,9 +712,23 @@ slate = get_slate(selected_date.isoformat())
 hitter_stats, pitcher_stats = get_hitter_stats(), get_pitcher_stats()
 if slate.empty: st.stop()
 
-# --- THE GAME LOOP ---
+# --- THE RENDERER (Integrated Tooltips) ---
+def _render_isolated_matchup(df: pd.DataFrame):
+    df = impute_stats(df, "hitter")
+    df["alert"] = df["test_score"].apply(lambda x: calculate_4tier_emoji(x))
+    st.dataframe(
+        df, use_container_width=True, height=325,
+        column_config={
+            "alert": st.column_config.TextColumn("Signal", help="🟢Elite, 🟡Pace, 🟠Caution, 🔴Fade"),
+            "hr_game_pct": st.column_config.NumberColumn("HR Game%", format="%.1f%%", help="Prob of ≥1 HR"),
+            "iso": st.column_config.NumberColumn("ISO", format="%.3f", help="Isolated Power"),
+            "xwoba": st.column_config.NumberColumn("xwOBA", format="%.3f", help="Exp. wOBA"),
+            "la": st.column_config.NumberColumn("LA", format="%.1f°", help="Launch Angle"),
+        }
+    )
+
+# --- YOUR ORIGINAL GAME LOOP ---
 for _, game in slate.iterrows():
-    # Fetch Context
     pk = int(game["gamePk"])
     away_lineup = get_lineup(pk, "away")
     home_lineup = get_lineup(pk, "home")
