@@ -651,14 +651,15 @@ for _, game in slate.iterrows():
                                     a_disp = a[summary_cols].rename(columns={"pitch_name": "Pitch", "pitch_usage": "Usage%", "whiff_percent": "Whiff%"})
                                     st.dataframe(a_disp.reset_index(drop=True).style.format({"Usage%": "{:.1f}%", "Whiff%": "{:.1f}%"}, na_rep="—"), hide_index=True, use_container_width=True)
 """
-app.py — Posey MLB HR & K Data Dashboard (Complete Production Build)
+app.py — Posey MLB HR & K Data Dashboard
+Final Unified Production Build
 """
 from __future__ import annotations
 from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-# --- ALL YOUR ORIGINAL IMPORTS ---
+# --- ALL ORIGINAL IMPORTS ---
 from data_fetcher import (
     get_slate, get_lineup, get_team_roster, get_all_team_rosters,
     get_hitter_stats, get_pitcher_stats, get_pitcher_arsenal,
@@ -669,11 +670,14 @@ from models import build_matchup_table, build_pitcher_slate
 from park_factors import get_park
 from weather import fetch_weather, hr_multiplier
 from sleepers import hr_probability, find_sleepers, grand_slam_probability
-from splits import bvp_for_lineup, find_similar_pitchers, hitter_vs_similar
+from splits import (
+    bvp_for_lineup, find_similar_pitchers, hitter_vs_similar,
+)
 from pitch_match import get_hitter_pitch_arsenal, lineup_pitch_match
 from game_context import (
     get_umpire_for_game, get_catcher_framing, get_team_defense,
-    get_vegas_totals, get_pitcher_workload, ttop_multiplier, park_hand_factor,
+    get_vegas_totals, get_pitcher_workload,
+    ttop_multiplier, park_hand_factor,
 )
 from props import (
     hr_prob_per_pa, hr_prob_full_game, k_total_projection,
@@ -698,32 +702,14 @@ def impute_stats(df: pd.DataFrame, type="hitter"):
         if col in df.columns: df[col] = df[col].fillna(val)
     return df
 
-# --- UI POLISH ---
-st.markdown("<style>div[data-testid='stMetric'] { min-height: 85px; }</style>", unsafe_allow_html=True)
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.title("⚾ MLB Props")
-    selected_date = st.date_input("Slate date", value=date.today())
-    use_pitch_match = st.checkbox("Pitch-match analysis", value=True)
-    use_vegas = st.checkbox("Vegas implied totals", value=True)
-    use_umpire = st.checkbox("Umpire variables", value=True)
-    use_recent_form = st.checkbox("Recent L15 form", value=True)
-    if st.button("🔄 Force refresh"): st.cache_data.clear(); st.rerun()
-
-# --- ORIGINAL LOAD LOGIC ---
-slate = get_slate(selected_date.isoformat())
-hitter_stats, pitcher_stats = get_hitter_stats(), get_pitcher_stats()
-if slate.empty: st.stop()
-
-# --- THE RENDERER (Updated with Tooltips) ---
+# --- RENDERER ---
 def _render_isolated_matchup(df: pd.DataFrame):
     df = impute_stats(df, "hitter")
     df["alert"] = df["test_score"].apply(lambda x: calculate_4tier_emoji(x))
     st.dataframe(
         df, use_container_width=True, height=325,
         column_config={
-            "alert": st.column_config.TextColumn("Signal", help="🟢Elite, 🟡Pace, 🟠Caution, 🔴Fade"),
+            "alert": st.column_config.TextColumn("Signal", help="4-Tier Matchup Alert: [🟢Elite, 🟡Pace, 🟠Caution, 🔴Fade]"),
             "hr_game_pct": st.column_config.NumberColumn("HR Game%", format="%.1f%%", help="Prob of ≥1 HR"),
             "iso": st.column_config.NumberColumn("ISO", format="%.3f", help="Isolated Power"),
             "xwoba": st.column_config.NumberColumn("xwOBA", format="%.3f", help="Exp. Weighted On-Base"),
@@ -731,9 +717,19 @@ def _render_isolated_matchup(df: pd.DataFrame):
         }
     )
 
-# --- YOUR ORIGINAL GAME LOOP ---
+# --- SIDEBAR & LOAD ---
+with st.sidebar:
+    st.title("⚾ MLB Props")
+    selected_date = st.date_input("Slate date", value=date.today())
+    if st.button("🔄 Force refresh"): st.cache_data.clear(); st.rerun()
+
+slate = get_slate(selected_date.isoformat())
+hitter_stats, pitcher_stats = get_hitter_stats(), get_pitcher_stats()
+if slate.empty: st.stop()
+
+# --- THE GAME LOOP ---
 for _, game in slate.iterrows():
-    # Context Logic
+    # Fetch Context
     pk = int(game["gamePk"])
     away_lineup = get_lineup(pk, "away")
     home_lineup = get_lineup(pk, "home")
