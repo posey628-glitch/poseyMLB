@@ -650,3 +650,101 @@ for _, game in slate.iterrows():
                                     summary_cols = [c for c in ["pitch_name", "pitch_usage", "ba", "slg", "woba", "whiff_percent"] if c in a.columns]
                                     a_disp = a[summary_cols].rename(columns={"pitch_name": "Pitch", "pitch_usage": "Usage%", "whiff_percent": "Whiff%"})
                                     st.dataframe(a_disp.reset_index(drop=True).style.format({"Usage%": "{:.1f}%", "Whiff%": "{:.1f}%"}, na_rep="—"), hide_index=True, use_container_width=True)
+"""
+app.py — Posey MLB HR & K Data Dashboard (Complete Production Build)
+"""
+from __future__ import annotations
+from datetime import date, datetime
+import pandas as pd
+import streamlit as st
+
+# --- ALL YOUR ORIGINAL IMPORTS ---
+from data_fetcher import (
+    get_slate, get_lineup, get_team_roster, get_all_team_rosters,
+    get_hitter_stats, get_pitcher_stats, get_pitcher_arsenal,
+    get_hitter_traditional, get_pitcher_traditional,
+    get_pitcher_recent_form, get_hitter_recent_form_trad,
+)
+from models import build_matchup_table, build_pitcher_slate
+from park_factors import get_park
+from weather import fetch_weather, hr_multiplier
+from sleepers import hr_probability, find_sleepers, grand_slam_probability
+from splits import bvp_for_lineup, find_similar_pitchers, hitter_vs_similar
+from pitch_match import get_hitter_pitch_arsenal, lineup_pitch_match
+from game_context import (
+    get_umpire_for_game, get_catcher_framing, get_team_defense,
+    get_vegas_totals, get_pitcher_workload, ttop_multiplier, park_hand_factor,
+)
+from props import (
+    hr_prob_per_pa, hr_prob_full_game, k_total_projection,
+    verdict_color, edge_vs_market,
+)
+
+# Page Config
+st.set_page_config(page_title="Posey MLB HR & K Data", layout="wide", page_icon="⚾")
+
+# --- INTEGRATED ENGINES ---
+def calculate_4tier_emoji(score: float, scale=(45, 65)) -> str:
+    if pd.isna(score) or score > 95: return "⚪"
+    mid = sum(scale) / 2
+    if score >= scale[1]: return "🟢"
+    elif score >= mid: return "🟡"
+    elif score >= scale[0]: return "🟠"
+    return "🔴"
+
+def impute_stats(df: pd.DataFrame, type="hitter"):
+    defaults = {"barrel_pct": 7.8, "iso": 0.165, "xwoba": 0.318, "xwobacon": 0.365, "la": 12.0} if type == "hitter" else {"era": 3.85, "k9": 8.6}
+    for col, val in defaults.items():
+        if col in df.columns: df[col] = df[col].fillna(val)
+    return df
+
+# --- UI POLISH ---
+st.markdown("<style>div[data-testid='stMetric'] { min-height: 85px; }</style>", unsafe_allow_html=True)
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.title("⚾ MLB Props")
+    selected_date = st.date_input("Slate date", value=date.today())
+    use_pitch_match = st.checkbox("Pitch-match analysis", value=True)
+    use_vegas = st.checkbox("Vegas implied totals", value=True)
+    use_umpire = st.checkbox("Umpire variables", value=True)
+    use_recent_form = st.checkbox("Recent L15 form", value=True)
+    if st.button("🔄 Force refresh"): st.cache_data.clear(); st.rerun()
+
+# --- ORIGINAL LOAD LOGIC ---
+slate = get_slate(selected_date.isoformat())
+hitter_stats, pitcher_stats = get_hitter_stats(), get_pitcher_stats()
+if slate.empty: st.stop()
+
+# --- THE RENDERER (Updated with Tooltips) ---
+def _render_isolated_matchup(df: pd.DataFrame):
+    df = impute_stats(df, "hitter")
+    df["alert"] = df["test_score"].apply(lambda x: calculate_4tier_emoji(x))
+    st.dataframe(
+        df, use_container_width=True, height=325,
+        column_config={
+            "alert": st.column_config.TextColumn("Signal", help="🟢Elite, 🟡Pace, 🟠Caution, 🔴Fade"),
+            "hr_game_pct": st.column_config.NumberColumn("HR Game%", format="%.1f%%", help="Prob of ≥1 HR"),
+            "iso": st.column_config.NumberColumn("ISO", format="%.3f", help="Isolated Power"),
+            "xwoba": st.column_config.NumberColumn("xwOBA", format="%.3f", help="Exp. Weighted On-Base"),
+            "la": st.column_config.NumberColumn("LA", format="%.1f°", help="Launch Angle"),
+        }
+    )
+
+# --- YOUR ORIGINAL GAME LOOP ---
+for _, game in slate.iterrows():
+    # Context Logic
+    pk = int(game["gamePk"])
+    away_lineup = get_lineup(pk, "away")
+    home_lineup = get_lineup(pk, "home")
+    away_matchup = build_matchup_table(away_lineup, None, hitter_stats, pitcher_stats)
+    home_matchup = build_matchup_table(home_lineup, None, hitter_stats, pitcher_stats)
+    
+    st.subheader(f"🏟️ {game['away_team_abbr']} @ {game['home_team_abbr']}")
+    col1, col2 = st.columns(2)
+    with col1: _render_isolated_matchup(away_matchup)
+    with col2: _render_isolated_matchup(home_matchup)
+
+# --- PITCHER OVERVIEW ---
+st.subheader("📋 Starting Pitcher Overview")
+st.dataframe(build_pitcher_slate(slate, pitcher_stats, {}), use_container_width=True)
