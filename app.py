@@ -59,12 +59,10 @@ def calculate_4tier_emoji(score, scale=(45,65)):
     return "🔴"
 
 def edge_color(val):
-    if val >= 8:
-        return "background-color: rgba(0,255,0,0.25)"
-    elif val >= 4:
-        return "background-color: rgba(255,255,0,0.2)"
-    elif val < 0:
-        return "background-color: rgba(255,0,0,0.15)"
+    if pd.isna(val): return ""
+    if val >= 8: return "background-color: rgba(0,255,0,0.25)"
+    elif val >= 4: return "background-color: rgba(255,255,0,0.2)"
+    elif val < 0: return "background-color: rgba(255,0,0,0.15)"
     return ""
 
 # ---------------- SIDEBAR ----------------
@@ -110,7 +108,7 @@ vegas_df = c_vegas(selected_date.isoformat()) if use_vegas else pd.DataFrame()
 def apply_filters(df):
     if df.empty: return df
 
-    if search_player:
+    if search_player and "player_name" in df.columns:
         df = df[df["player_name"].str.contains(search_player, case=False, na=False)]
 
     if "hr_game_pct" in df.columns:
@@ -155,32 +153,45 @@ for g in slate.itertuples():
     away_df = build_matchup_table(away_lineup,pd.Series(hp),hitter_stats,pitcher_stats)
     home_df = build_matchup_table(home_lineup,pd.Series(ap),hitter_stats,pitcher_stats)
 
+    # ✅ SAFE pitch match merge
     if use_pitch_match:
         for df,lineup,pid in [(away_df,away_lineup,g.home_pitcher_id),(home_df,home_lineup,g.away_pitcher_id)]:
             pm = lineup_pitch_match(lineup,pid,hitter_pitch,pitcher_arsenal)
-            if not pm.empty and "player_id" in pm.columns:
+            if isinstance(pm, pd.DataFrame) and not pm.empty and "player_id" in pm.columns:
                 df[:] = df.merge(pm,on="player_id",how="left")
 
     for df,p in [(away_df,hp),(home_df,ap)]:
 
-        if df.empty: continue
+        if df.empty:
+            continue
 
         df[:] = hr_probability(df,pd.Series(p),total_mult)
+
+        # ✅ FIX: ensure hr_prob exists BEFORE sleepers
+        if "hr_prob" not in df.columns:
+            if "hr_game_pct" in df.columns:
+                df["hr_prob"] = df["hr_game_pct"] / 100
+            elif "hr_pa_pct" in df.columns:
+                df["hr_prob"] = df["hr_pa_pct"] / 100
+            else:
+                df["hr_prob"] = 0.0
+
         df[:] = find_sleepers(df)
         df[:] = grand_slam_probability(df,pd.Series(p),total_mult)
 
-        hr_game = []
-        edges = []
+        hr_game, edges = [], []
 
         for row in df.itertuples():
-            pa = hr_prob_per_pa(row._asdict(),p,
-                park_factor=park_mult,
-                weather_mult=wx_mult)
 
-            game_hr = hr_prob_full_game(pa)*100
+            pa = hr_prob_per_pa(
+                row._asdict(), p,
+                park_factor=park_mult,
+                weather_mult=wx_mult
+            )
+
+            game_hr = hr_prob_full_game(pa) * 100
             hr_game.append(game_hr)
 
-            # MODEL EDGE (NO SPORTSBOOK)
             edge = game_hr - 12.5
             edges.append(edge)
 
@@ -208,20 +219,21 @@ for ctx in game_map.values():
     if not ctx["home"].empty: all_hitters.append(ctx["home"])
 
 if all_hitters:
-    combined = pd.concat(all_hitters)
-    elite = combined.sort_values("model_edge", ascending=False).head(20)
+    combined = pd.concat(all_hitters, ignore_index=True)
 
-    st.dataframe(
-        elite[[
-            "player_name",
-            "hr_game_pct",
-            "model_edge",
-            "iso",
-            "xwoba",
-            "pitch_match_score"
-        ]],
-        use_container_width=True
-    )
+    if "model_edge" in combined.columns:
+        elite = combined.sort_values("model_edge", ascending=False).head(20)
+
+        st.dataframe(
+            elite[[
+                c for c in [
+                    "player_name","hr_game_pct","model_edge",
+                    "iso","xwoba","pitch_match_score"
+                ]
+                if c in elite.columns
+            ]],
+            use_container_width=True
+        )
 
 # ---------------- RENDER ----------------
 def render(df):
@@ -236,7 +248,7 @@ def render(df):
         st.warning("No players match filters")
         return
 
-    df["alert"] = df["test_score"].apply(calculate_4tier_emoji)
+    df["alert"] = df.get("test_score", pd.Series()).apply(calculate_4tier_emoji)
 
     cols = [c for c in [
         "alert","player_name","lineup_pos",
@@ -261,10 +273,15 @@ for g in slate.itertuples():
     c1.metric("HR Multiplier", f"{ctx['hr_mult']:.2f}")
     c2.metric("Weather", ctx["weather"])
 
-    combined = pd.concat([ctx["away"],ctx["home"]])
-    if not combined.empty:
+    combined = pd.concat([ctx["away"],ctx["home"]], ignore_index=True)
+
+    if not combined.empty and "hr_game_pct" in combined.columns:
         best = combined.sort_values("hr_game_pct",ascending=False).iloc[0]
-        st.success(f"👑 Top HR: {best['player_name']} ({best['hr_game_pct']:.1f}%)")
+
+        st.success(
+            f"👑 Top HR: {best.get('player_name','Unknown')} "
+            f"({best.get('hr_game_pct',0):.1f}%)"
+        )
 
     t1,t2,t3 = st.tabs(["Away","Home","K Props"])
 
@@ -279,6 +296,7 @@ for g in slate.itertuples():
 st.subheader("📋 Pitcher Overview")
 
 ps = build_pitcher_slate(slate,pitcher_stats,{})
-ps["alert"] = ps["test_score"].apply(calculate_4tier_emoji)
-
-st.dataframe(ps,use_container_width=True)
+if not ps.empty:
+    ps["alert"] = ps.get("test_score", pd.Series()).apply(calculate_4tier_emoji)
+    st.dataframe(ps,use_container_width=True)
+``
