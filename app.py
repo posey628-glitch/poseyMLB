@@ -291,12 +291,10 @@ for idx, (_, game) in enumerate(slate.iterrows()):
     away_k_proj = k_total_projection(
         away_p_row, home_lineup_k_pct,
         ump_k_factor=ump.get("k_factor", 1.0),
-        catcher_framing_factor=away_framing_factor,
     ) if away_p_row else {}
     home_k_proj = k_total_projection(
         home_p_row, away_lineup_k_pct,
         ump_k_factor=ump.get("k_factor", 1.0),
-        catcher_framing_factor=home_framing_factor,
     ) if home_p_row else {}
 
     ctx = {
