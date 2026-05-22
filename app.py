@@ -305,7 +305,6 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         "away_p_row": away_p_row, "home_p_row": home_p_row,
         "away_matchup": away_matchup, "home_matchup": home_matchup,
         "away_k_proj": away_k_proj, "home_k_proj": home_k_proj,
-        "away_framing": away_framing_factor, "home_framing": home_framing_factor,
     }
     game_context_map[game["gamePk"]] = ctx
 
