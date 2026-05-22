@@ -203,7 +203,7 @@ for idx, (_, game) in enumerate(slate.iterrows()):
     home_framing_factor = 1.0
     if use_umpire and not framing_df.empty:
         # Find catcher in lineup
-        for lineup, target_var in [(away_lineup, "away_framing_factor"),
+      for lineup, target_var in [(away_lineup, "away_framing_factor"),
                                      (home_lineup, "home_framing_factor")]:
     # Hitter recent form
     away_recent = {}
