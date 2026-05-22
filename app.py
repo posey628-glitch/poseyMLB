@@ -26,7 +26,6 @@ from models import build_matchup_table, build_pitcher_slate
 from park_factors import get_park
 from weather import fetch_weather, hr_multiplier
 from sleepers import hr_probability, find_sleepers, grand_slam_probability
-from sleepers import find_sleepers, grand_slam_probability
 from splits import (
     bvp_for_lineup, find_similar_pitchers, hitter_vs_similar,
 )
@@ -58,8 +57,8 @@ with st.sidebar:
         help="How well each hitter performs against today's pitcher's specific pitch mix. High impact.")
     use_vegas = st.checkbox("Vegas implied totals", value=True,
         help="Market totals as best environmental signal.")
-    use_umpire = st.checkbox("Umpire / catcher framing", value=True,
-        help="HP ump + catcher framing affect K rate.")
+    use_umpire = st.checkbox("Umpire variables", value=True,
+        help="HP umpire zones affect starting pitcher projection variables.")
     use_recent_form = st.checkbox("Recent L15 form", value=True,
         help="Hitter L15 / pitcher L5 starts. ~30s extra load.")
     use_bvp = st.checkbox("BvP & similar arsenal", value=False,
@@ -120,10 +119,6 @@ vegas_df = pd.DataFrame()
 if use_vegas:
     vegas_df = get_vegas_totals(selected_date.isoformat())
 
-framing_df = pd.DataFrame()
-if use_umpire:
-    framing_df = get_catcher_framing()
-
 
 # ---------------------------------------------------------------------------
 # Main Header
@@ -154,7 +149,7 @@ with st.expander("📖 Dashboard Metric Legend & Quick Reference Guide", expande
         st.markdown("**📈 Primary Betting Metrics**")
         st.markdown(
             "- **HR Game%:** The calculated, environment-adjusted probability that a hitter hits 1 or more home runs today.\n"
-            "- **Proj K / Range:** The projected strikeout ceiling and basement for a starting pitcher based on umpire zones, framing, and lineup trends."
+            "- **Proj K / Range:** The projected strikeout ceiling and basement for a starting pitcher based on umpire zones and lineup trends."
         )
 
     with leg_col2:
@@ -304,15 +299,13 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         "away_p_row": away_p_row, "home_p_row": home_p_row,
         "away_matchup": away_matchup, "home_matchup": home_matchup,
         "away_k_proj": away_k_proj, "home_k_proj": home_k_proj,
-        "away_framing": away_p_row.get("catcher_framing_k_factor", 1.0),
-        "home_framing": home_p_row.get("catcher_framing_k_factor", 1.0),
     }
 
 progress.empty()
 
 
 # ---------------------------------------------------------------------------
-# 📋 Slate Summary — Starting Pitchers
+# 📋 Slate Summary — Starting Pitchers 
 # ---------------------------------------------------------------------------
 
 st.subheader("📋 Starting Pitcher Overview")
@@ -475,8 +468,7 @@ for _, game in slate.iterrows():
         st.caption(
             f"📍 **Venue:** {game.get('venue', 'TBD')} ({park.get('roof', 'open')})  ·  "
             f"**Base Park HR Factor:** {park.get('hr_factor', 100)}  ·  "
-            f"**Atmospheric Context:** {ctx['summary'] or 'No wind data available'}  ·  "
-            f"**Catcher Framing Influence:** Away: {ctx['away_framing']:.2f}× / Home: {ctx['home_framing']:.2f}×"
+            f"**Atmospheric Context:** {ctx['summary'] or 'No wind data available'}"
         )
         
         # ---------------------------------------------------------------------------
@@ -491,18 +483,43 @@ for _, game in slate.iterrows():
         if all_game_hitters:
             combined_game_hitters = pd.concat(all_game_hitters, ignore_index=True)
             if "hr_game_pct" in combined_game_hitters.columns:
-                # Isolate the singular highest-probability power target for this specific game card
                 best_hitter_row = combined_game_hitters.sort_values(by="hr_game_pct", ascending=False).iloc[0]
                 
                 with st.container(border=True):
-                    # Clean markdown layout to broadcast the edge directly
                     st.markdown(f"👑 **Top Matchup HR Contender:** `{best_hitter_row.get('player_name', 'Unknown Hitter')}`")
                     st.markdown(
                         f"- **Calibrated Prop Odds:** {best_hitter_row.get('hr_game_pct', 0):.1f}% Chance of ≥1 HR today "
                         f"(Pure PA Projection Rate: {best_hitter_row.get('hr_pa_pct', 0):.2f}%)\n"
                         f"- **Analytics Anchor:** Matchup Grading sits at **{best_hitter_row.get('matchup', 50):.1f}** "
-                        f"with a raw **{best_hitter_row.get('iso', 0):.3f} ISO** profiles against today's target pitch types."
+                        f"with a raw **{best_hitter_row.get('iso', 0):.3f} ISO** profile against today's target pitch types."
                     )
+
+                    # ---------------------------------------------------------------------------
+                    # 🔬 Advanced Pitch Sequence Profile (2-Strike Put-Away Engine)
+                    # ---------------------------------------------------------------------------
+                    if not pitcher_arsenal_all.empty:
+                        # Identify who today's opposing starter actually is
+                        opp_p_id = game["home_pitcher_id"] if best_hitter_row.get("player_id") in ctx["away_matchup"]["player_id"].values else game["away_pitcher_id"]
+                        
+                        # Filter the global arsenal data down to this specific starting pitcher
+                        p_arsenal = pitcher_arsenal_all[pitcher_arsenal_all.get("player_id") == opp_p_id] if "player_id" in pitcher_arsenal_all.columns else pd.DataFrame()
+                        
+                        if not p_arsenal.empty and "put_away" in p_arsenal.columns:
+                            # Isolate their single highest usage weapon when they are hunting for a strikeout
+                            deadliest_pitch_row = p_arsenal.sort_values(by="put_away", ascending=False).iloc[0]
+                            put_away_pitch_name = deadliest_pitch_row.get("pitch_name", "Breaking Ball")
+                            put_away_rate = deadliest_pitch_row.get("put_away", 0)
+                            
+                            st.markdown(f"🎯 **2-Strike Put-Away Sequence Threat Profile:**")
+                            st.markdown(
+                                f"  - Today's opposing starter primarily features their **{put_away_pitch_name}** as a 2-strike put-away weapon (generating a sharp **{put_away_rate:.1f}%** Put-Away rate overall).\n"
+                                f"  - `{best_hitter_row.get('player_name')}` vs. this pitch type historically: "
+                                f"**{best_hitter_row.get('best_pitch_xwoba', 0.320):.3f} xwOBA** · **{best_hitter_row.get('pitch_match_score', 50):.1f} Matchup Fit Rating**."
+                            )
+                            
+                            # Give a clear situational betting alert if the hitter excels against the pitcher's go-to execution pitch
+                            if best_hitter_row.get("best_pitch") == put_away_pitch_name or best_hitter_row.get("best_pitch_xwoba", 0) > 0.380:
+                                st.success(f"🔥 **SEQUENCE EDGE DETECTED:** This pitcher relies on their {put_away_pitch_name} to finish counts, but analytics indicate `{best_hitter_row.get('player_name')}` actively crushes that exact movement profile. Major mistake window expected.")
         
         # Dynamic Data Tabs for separate batting views
         away_tab_title = f"🏏 {game['away_team_abbr']} Hitters vs {game['home_pitcher']}"
