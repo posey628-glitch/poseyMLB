@@ -369,7 +369,7 @@ if all_prop_rows:
             "pitch_match_score": "Pitch Match", "best_pitch": "Best Pitch",
             "wx": "Conditions", "vegas_total": "O/U",
         })
-        # Format & color
+        # Format & color (Updated with na_rep to protect against missing data crashes)
         green = [c for c in ["HR Game%", "HR PA%", "Brl%", "Pitch Match"] if c in hr_df.columns]
         sty = hr_df.style
         if green:
@@ -378,7 +378,7 @@ if all_prop_rows:
             "HR Game%": "{:.1f}%", "HR PA%": "{:.2f}%",
             "Brl%": "{:.1f}%", "Pitch Match": "{:.1f}",
             "O/U": "{:.1f}",
-        })
+        }, na_rep="—")
         st.dataframe(sty, hide_index=True, use_container_width=True, height=620)
 
     with col_b:
@@ -419,7 +419,7 @@ if all_prop_rows:
                 "Opp K%": "{:.1f}%",
                 "P(O 5.5)": "{:.0%}", "P(O 6.5)": "{:.0%}",
                 "P(O 7.5)": "{:.0%}", "P(O 8.5)": "{:.0%}",
-            })
+            }, na_rep="—")
             st.dataframe(sty, hide_index=True, use_container_width=True, height=620)
 
 st.divider()
@@ -450,7 +450,7 @@ with st.expander("🎯 Slate Highlights — Sleepers & Grand Slam Candidates", e
                 sty = s_df.style.background_gradient(
                     cmap="RdYlGn",
                     subset=[c for c in ["Sleeper", "HR%"] if c in s_df.columns]
-                ).format({"Sleeper": "{:.1f}", "HR%": "{:.1f}%"})
+                ).format({"Sleeper": "{:.1f}", "HR%": "{:.1f}%"}, na_rep="—")
                 st.dataframe(sty, hide_index=True, use_container_width=True, height=480)
 
         with c2:
@@ -467,7 +467,7 @@ with st.expander("🎯 Slate Highlights — Sleepers & Grand Slam Candidates", e
             sty = gs.style.background_gradient(
                 cmap="RdYlGn",
                 subset=[c for c in ["GS Score", "HR%"] if c in gs.columns]
-            ).format({"GS Score": "{:.2f}", "HR%": "{:.1f}%"})
+            ).format({"GS Score": "{:.2f}", "HR%": "{:.1f}%"}, na_rep="—")
             st.dataframe(sty, hide_index=True, use_container_width=True, height=480)
 
 
@@ -520,7 +520,7 @@ if not pitcher_slate.empty:
         **{c: "{:.2f}" for c in ["ERA", "WHIP", "K/9", "BB/9", "HR/9", "L5 ERA", "L5 K/9"] if c in display.columns},
         "xwOBA": "{:.3f}",
         "Rest": "{:.0f}d", "Pitches": "{:.0f}",
-    })
+    }, na_rep="—")
     st.dataframe(sty, hide_index=True, use_container_width=True, height=420)
 
 
@@ -597,7 +597,7 @@ def _render_matchup(df: pd.DataFrame, title: str = ""):
         "HH%": "{:.1f}%", "SwSpot%": "{:.1f}%", "FB%": "{:.1f}%",
         "K%": "{:.1f}%", "BB%": "{:.1f}%", "Whiff%": "{:.1f}%",
         "LA": "{:.1f}",
-    })
+    }, na_rep="—")
     if title:
         st.markdown(f"#### {title}")
     st.dataframe(sty, hide_index=True, use_container_width=True)
@@ -691,7 +691,7 @@ for tab, (_, game) in zip(tabs, slate.iterrows()):
                 ])
                 col.dataframe(
                     lines_df.style.background_gradient(cmap="RdYlGn", subset=["Prob"])
-                    .format({"Prob": "{:.0%}"}),
+                    .format({"Prob": "{:.0%}"}, na_rep="—"),
                     hide_index=True, use_container_width=True,
                 )
 
@@ -785,7 +785,7 @@ for tab, (_, game) in zip(tabs, slate.iterrows()):
                         "xBA": "{:.3f}", "xSLG": "{:.3f}", "xwOBA": "{:.3f}",
                         "Usage%": "{:.1f}%", "SwStr%": "{:.1f}%",
                         "K%": "{:.1f}%", "PutAway%": "{:.1f}%", "HH%": "{:.1f}%",
-                    })
+                    }, na_rep="—")
                     st.dataframe(sty, hide_index=True, use_container_width=True)
 
 
