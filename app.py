@@ -4,7 +4,6 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 import requests
-import re
 
 # ---------------- IMPORTS ----------------
 from data_fetcher import (
@@ -14,6 +13,7 @@ from data_fetcher import (
     get_hitter_traditional,
     get_lineup
 )
+
 from models import build_matchup_table
 from park_factors import get_park
 from weather import fetch_weather, hr_multiplier
@@ -24,26 +24,21 @@ st.set_page_config(layout="wide", page_title="MLB HR Dashboard ⚾")
 
 # ---------------- CACHE ----------------
 @st.cache_data(ttl=1800)
-def c_slate(d):
-    return get_slate(d)
+def c_slate(d): return get_slate(d)
 
 @st.cache_data(ttl=1800)
-def c_hitter():
-    return get_hitter_stats()
+def c_hitter(): return get_hitter_stats()
 
 @st.cache_data(ttl=1800)
-def c_pitcher():
-    return get_pitcher_stats()
+def c_pitcher(): return get_pitcher_stats()
 
 @st.cache_data(ttl=1800)
-def c_trad():
-    return get_hitter_traditional()
+def c_trad(): return get_hitter_traditional()
 
 @st.cache_data(ttl=900)
 def c_weather(lat, lon):
     return fetch_weather(lat, lon, datetime.now())
 
-# ✅ PLAYER LOOKUP (INLINE, NO ERRORS)
 @st.cache_data(ttl=86400)
 def get_player_lookup():
     try:
@@ -55,7 +50,6 @@ def get_player_lookup():
             {"player_id": p.get("id"), "player_name": p.get("fullName")}
             for p in data.get("people", [])
         ])
-
     except:
         return pd.DataFrame(columns=["player_id", "player_name"])
 
@@ -83,18 +77,19 @@ with st.sidebar:
 
 # ---------------- LOAD ----------------
 slate = c_slate(str(selected_date))
+
 if slate.empty:
-    st.warning("No games found")
+    st.warning("No games available")
     st.stop()
 
 hitter = c_hitter().merge(c_trad(), on="player_id", how="left")
 
-# ✅ Attach names via ID
+# ✅ Add names via ID (bulletproof)
 lookup = get_player_lookup()
-hitter = hitter.merge(lookup, on="player_id", how="left")
+hitter = hitter.merge(lookup, on="player_id", how="left", validate="many_to_one")
 
 if "player_name" not in hitter.columns:
-    st.error("Player name mapping failed.")
+    st.error("Player name lookup failed")
     st.stop()
 
 pitcher = c_pitcher()
@@ -112,33 +107,26 @@ for g in slate.itertuples():
 
     hr_mult, _ = hr_multiplier(weather, park)
 
-    # ✅ REAL LINEUPS
-    away_lineup = get_lineup(g.gamePk, "away")
-    home_lineup = get_lineup(g.gamePk, "home")
+    # ✅ get real lineups
+    away_raw = get_lineup(g.gamePk, "away")
+    home_raw = get_lineup(g.gamePk, "home")
 
-    # ✅ fallback if lineup missing
-    if not away_lineup:
-        away_lineup = hitter.head(9)["player_id"].tolist()
+    # ✅ fallback if empty
+    if not away_raw:
+        away_lineup = [{"id": pid} for pid in hitter.head(9)["player_id"]]
+    else:
+        away_lineup = [{"id": p} if isinstance(p, int) else p for p in away_raw]
 
-    if not home_lineup:
-        home_lineup = hitter.head(9)["player_id"].tolist()
+    if not home_raw:
+        home_lineup = [{"id": pid} for pid in hitter.head(9)["player_id"]]
+    else:
+        home_lineup = [{"id": p} if isinstance(p, int) else p for p in home_raw]
 
     # ✅ build matchup tables
-    away_df = build_matchup_table(
-        away_lineup,
-        pd.Series({}),
-        hitter,
-        pitcher
-    )
+    away_df = build_matchup_table(away_lineup, pd.Series({}), hitter, pitcher)
+    home_df = build_matchup_table(home_lineup, pd.Series({}), hitter, pitcher)
 
-    home_df = build_matchup_table(
-        home_lineup,
-        pd.Series({}),
-        hitter,
-        pitcher
-    )
-
-    for df in [away_df, home_df]:
+    for df in (away_df, home_df):
 
         if df.empty:
             continue
@@ -159,10 +147,7 @@ for g in slate.itertuples():
         df["hr_game_pct"] = hr_vals
         df["model_edge"] = edge_vals
 
-    games[g.gamePk] = {
-        "away": away_df,
-        "home": home_df
-    }
+    games[g.gamePk] = {"away": away_df, "home": home_df}
 
 # ---------------- RENDER ----------------
 def render(df):
@@ -185,10 +170,13 @@ def render(df):
         "xwoba"
     ] if c in df.columns]
 
-    st.dataframe(
-        df[cols].style.apply(color_row, axis=1),
-        use_container_width=True
-    )
+    if not cols:
+        st.write("No displayable columns")
+        return
+
+    styled = df[cols].style.apply(color_row, axis=1)
+
+    st.dataframe(styled, use_container_width=True)
 
 # ---------------- UI ----------------
 st.title("⚾ MLB HR Dashboard")
@@ -197,13 +185,14 @@ for g in slate.itertuples():
 
     st.markdown(f"### {g.away_team_abbr} @ {g.home_team_abbr}")
 
-    ctx = games.get(g.gamePk, {})
+    ctx = games.get(g.gamePk, {"away": pd.DataFrame(), "home": pd.DataFrame()})
 
-    tab1, tab2 = st.tabs(["Away","Home"])
+    tab1, tab2 = st.tabs(["Away", "Home"])
 
     with tab1:
-        render(ctx.get("away", pd.DataFrame()))
+        render(ctx["away"])
 
     with tab2:
-        render(ctx.get("home", pd.DataFrame()))
+        render(ctx["home"])
+
 
