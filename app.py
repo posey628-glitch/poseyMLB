@@ -293,7 +293,7 @@ for idx, (_, game) in enumerate(slate.iterrows()):
     home_lineup_k_pct = home_matchup["k_pct"].mean() if "k_pct" in home_matchup.columns and not home_matchup.empty else 22
 
     away_k_proj = k_total_projection(away_p_row, home_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if away_p_row else {}
-    home_k_proj = k_total_projection(home_p_row, away_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if home_p_row else {}
+    home_k_proj = k_total_projection(home_p_row, away_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if home_k_proj else {}
 
     game_context_map[game["gamePk"]] = {
         "park": park, "weather": weather, "wx_mult": wx_mult, "park_mult": park_mult,
@@ -310,7 +310,7 @@ progress.empty()
 
 
 # ---------------------------------------------------------------------------
-# 📋 Slate Summary — Starting Pitchers (Absolute Reset-Index Resolution)
+# 📋 Slate Summary — Starting Pitchers (Safe Native-Styling Architecture)
 # ---------------------------------------------------------------------------
 
 st.subheader("📋 Starting Pitcher Overview")
@@ -328,29 +328,19 @@ pitcher_slate = build_pitcher_slate(slate, pitcher_stats, {
 if not pitcher_slate.empty:
     pitcher_slate["verdict"] = pitcher_slate["test_score"].apply(lambda x: verdict_color(x, scale=(45, 65)))
     
-    rename_mapping = {
-        "test_score": "Test", "kHR": "kHR", "proj_k": "Proj K", "form_arrow": "Trend",
-        "era": "ERA", "whip": "WHIP", "k9": "K/9", "bb9": "BB/9", "hr9": "HR/9",
-        "k_pct": "K%", "whiff_pct": "Whiff%", "csw_pct": "CSW%", "xwoba_allowed": "xwOBA", "barrel_allowed": "Brl%",
-        "recent_era": "L5 ERA", "recent_k9": "L5 K/9", "days_rest": "Rest", "avg_recent_pitches": "Pitches"
-    }
-    
+    # Define our structural layout order using native DataFrame keys
     base_cols = ["verdict", "pitcher_name", "team", "home_away", "opp", "throws"]
-    existing_data_cols = [c for c in rename_mapping.keys() if c in pitcher_slate.columns]
+    metric_cols = ["test_score", "kHR", "proj_k", "form_arrow", "era", "whip", "k9", "bb9", "hr9", 
+                   "k_pct", "whiff_pct", "csw_pct", "xwoba_allowed", "barrel_allowed", 
+                   "recent_era", "recent_k9", "days_rest", "avg_recent_pitches"]
     
-    # Pristine serialization isolation block
-    display = pitcher_slate[base_cols + existing_data_cols].copy()
-    display = display.rename(columns={
-        **{"verdict": "", "pitcher_name": "Pitcher", "team": "Tm", "home_away": "", "opp": "Opp", "throws": "T"},
-        **rename_mapping
-    })
+    existing_metrics = [c for c in metric_cols if c in pitcher_slate.columns]
+    display = pitcher_slate[base_cols + existing_metrics].copy().reset_index(drop=True)
     
-    # Force single baseline evaluation tracking
-    display = display.reset_index(drop=True)
-    
-    green_p = [c for c in ["Test", "kHR", "Proj K", "K/9", "K%", "Whiff%", "CSW%", "L5 K/9"] 
+    # STYLING RULES: Apply gradients directly to raw keys before renaming map
+    green_p = [c for c in ["test_score", "kHR", "proj_k", "k9", "k_pct", "whiff_pct", "csw_pct", "recent_k9"] 
                if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
-    red_p = [c for c in ["ERA", "WHIP", "BB/9", "HR/9", "xwOBA", "Brl%", "L5 ERA"] 
+    red_p = [c for c in ["era", "whip", "bb9", "hr9", "xwoba_allowed", "barrel_allowed", "recent_era"] 
              if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
     
     sty = display.style
@@ -359,20 +349,28 @@ if not pitcher_slate.empty:
     if red_p:
         sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_p)
         
+    # Construct raw data styling format profiles
     format_dict = {}
-    one_decimal_targets = ["Test", "kHR", "Proj K", "K%", "Whiff%", "CSW%", "Brl%"]
-    two_decimal_targets = ["ERA", "WHIP", "K/9", "BB/9", "HR/9", "L5 ERA", "L5 K/9"]
-    
-    for c in one_decimal_targets:
+    for c in ["test_score", "kHR", "proj_k", "k_pct", "whiff_pct", "csw_pct", "barrel_allowed"]:
         if c in display.columns: format_dict[c] = "{:.1f}"
-    for c in two_decimal_targets:
+    for c in ["era", "whip", "k9", "bb9", "hr9", "recent_era", "recent_k9"]:
         if c in display.columns: format_dict[c] = "{:.2f}"
-            
-    if "xwOBA" in display.columns: format_dict["xwOBA"] = "{:.3f}"
-    if "Rest" in display.columns: format_dict["Rest"] = "{:.0f}d"
-    if "Pitches" in display.columns: format_dict["Pitches"] = "{:.0f}"
-
+    if "xwoba_allowed" in display.columns: format_dict["xwoba_allowed"] = "{:.3f}"
+    if "days_rest" in display.columns: format_dict["days_rest"] = "{:.0f}d"
+    if "avg_recent_pitches" in display.columns: format_dict["avg_recent_pitches"] = "{:.0f}"
+    
     sty = sty.format(format_dict, na_rep="—")
+    
+    # RENAME AT THE VIEWPORT LAYER: Modifying Styler column strings leaves index history untouched
+    rename_mapping = {
+        "verdict": "", "pitcher_name": "Pitcher", "team": "Tm", "home_away": "", "opp": "Opp", "throws": "T",
+        "test_score": "Test", "kHR": "kHR", "proj_k": "Proj K", "form_arrow": "Trend",
+        "era": "ERA", "whip": "WHIP", "k9": "K/9", "bb9": "BB/9", "hr9": "HR/9",
+        "k_pct": "K%", "whiff_pct": "Whiff%", "csw_pct": "CSW%", "xwoba_allowed": "xwOBA", "barrel_allowed": "Brl%",
+        "recent_era": "L5 ERA", "recent_k9": "L5 K/9", "days_rest": "Rest", "avg_recent_pitches": "Pitches"
+    }
+    sty = sty.relabel_index([rename_mapping.get(c, c) for c in display.columns], axis="columns")
+    
     st.dataframe(sty, hide_index=True, use_container_width=True, height=350)
 
 st.divider()
@@ -386,7 +384,7 @@ st.subheader("🎮 Isolated Game-by-Game Matchups")
 st.caption("Every active position player mapped directly to today's starting pitcher. Columns are color-weighted dynamically.")
 
 def _render_isolated_matchup(df: pd.DataFrame):
-    """Render hitter grid using localized layout settings."""
+    """Render hitter grid using native keys and viewport layer renaming adjustments."""
     if df is None or df.empty:
         st.write("No roster or lineup data compiled.")
         return
@@ -398,21 +396,12 @@ def _render_isolated_matchup(df: pd.DataFrame):
         "fb_pct", "la", "k_pct", "bb_pct", "whiff_pct", "home_run", "recent_hr", "sleeper_score", "gs_score",
     ]
     keep = [c for c in show_cols if c in df.columns]
-    display = df[keep].copy().rename(columns={
-        "verdict": "", "player_name": "Hitter", "lineup_pos": "#", "position": "Pos", "bats": "B",
-        "hr_game_pct": "HR Game%", "hr_pa_pct": "HR PA%", "matchup": "Matchup", "test_score": "Test",
-        "barrel_pct": "Brl%", "iso": "ISO", "xwoba": "xwOBA", "xwobacon": "xwOBAcon",
-        "pitch_match_score": "Pitch Match", "best_pitch": "Best Pitch", "best_pitch_xwoba": "Best xwOBA", "worst_pitch": "Worst Pitch",
-        "fb_pct": "FB%", "la": "LA", "k_pct": "K%", "bb_pct": "BB%", "whiff_pct": "Whiff%",
-        "home_run": "HR", "recent_hr": "L15 HR", "sleeper_score": "Sleeper", "gs_score": "GS",
-    })
-    
-    display = display.reset_index(drop=True)
+    display = df[keep].copy().reset_index(drop=True)
 
-    green_m = [c for c in ["HR Game%", "HR PA%", "Matchup", "Test", "Pitch Match", "ISO", "xwOBA", "xwOBAcon",
-                           "Brl%", "FB%", "BB%", "HR", "L15 HR", "Sleeper", "GS"] 
+    green_m = [c for c in ["hr_game_pct", "hr_pa_pct", "matchup", "test_score", "pitch_match_score", "iso", "xwoba", "xwobacon",
+                           "barrel_pct", "fb_pct", "bb_pct", "home_run", "recent_hr", "sleeper_score", "gs_score"] 
                if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
-    red_m = [c for c in ["K%", "Whiff%"] 
+    red_m = [c for c in ["k_pct", "whiff_pct"] 
              if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
 
     sty = display.style
@@ -422,25 +411,34 @@ def _render_isolated_matchup(df: pd.DataFrame):
         sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_m)
         
     m_format_dict = {}
-    m_one_decimal = ["Matchup", "Test", "Pitch Match", "Sleeper"]
-    for c in m_one_decimal:
+    for c in ["matchup", "test_score", "pitch_match_score", "sleeper_score"]:
         if c in display.columns: m_format_dict[c] = "{:.1f}"
             
-    if "HR Game%" in display.columns: m_format_dict["HR Game%"] = "{:.1f}%"
-    if "HR PA%" in display.columns: m_format_dict["HR PA%"] = "{:.2f}%"
-    if "GS" in display.columns: m_format_dict["GS"] = "{:.2f}"
-    if "ISO" in display.columns: m_format_dict["ISO"] = "{:.3f}"
-    if "xwOBA" in display.columns: m_format_dict["xwOBA"] = "{:.3f}"
-    if "xwOBAcon" in display.columns: m_format_dict["xwOBAcon"] = "{:.3f}"
-    if "Best xwOBA" in display.columns: m_format_dict["Best xwOBA"] = "{:.3f}"
-    if "Brl%" in display.columns: m_format_dict["Brl%"] = "{:.1f}%"
-    if "FB%" in display.columns: m_format_dict["FB%"] = "{:.1f}%"
-    if "K%" in display.columns: m_format_dict["K%"] = "{:.1f}%"
-    if "BB%" in display.columns: m_format_dict["BB%"] = "{:.1f}%"
-    if "Whiff%" in display.columns: m_format_dict["Whiff%"] = "{:.1f}%"
-    if "LA" in display.columns: m_format_dict["LA"] = "{:.1f}"
+    if "hr_game_pct" in display.columns: m_format_dict["hr_game_pct"] = "{:.1f}%"
+    if "hr_pa_pct" in display.columns: m_format_dict["hr_pa_pct"] = "{:.2f}%"
+    if "gs_score" in display.columns: m_format_dict["gs_score"] = "{:.2f}"
+    if "iso" in display.columns: m_format_dict["iso"] = "{:.3f}"
+    if "xwoba" in display.columns: m_format_dict["xwoba"] = "{:.3f}"
+    if "xwobacon" in display.columns: m_format_dict["xwobacon"] = "{:.3f}"
+    if "best_pitch_xwoba" in display.columns: m_format_dict["best_pitch_xwoba"] = "{:.3f}"
+    if "barrel_pct" in display.columns: m_format_dict["barrel_pct"] = "{:.1f}%"
+    if "fb_pct" in display.columns: m_format_dict["fb_pct"] = "{:.1f}%"
+    if "k_pct" in display.columns: m_format_dict["k_pct"] = "{:.1f}%"
+    if "bb_pct" in display.columns: m_format_dict["bb_pct"] = "{:.1f}%"
+    if "whiff_pct" in display.columns: m_format_dict["whiff_pct"] = "{:.1f}%"
+    if "la" in display.columns: m_format_dict["la"] = "{:.1f}"
 
     sty = sty.format(m_format_dict, na_rep="—")
+    
+    rename_mapping_m = {
+        "verdict": "", "player_name": "Hitter", "lineup_pos": "#", "position": "Pos", "bats": "B",
+        "hr_game_pct": "HR Game%", "hr_pa_pct": "HR PA%", "matchup": "Matchup", "test_score": "Test",
+        "barrel_pct": "Brl%", "iso": "ISO", "xwoba": "xwOBA", "xwobacon": "xwOBAcon",
+        "pitch_match_score": "Pitch Match", "best_pitch": "Best Pitch", "best_pitch_xwoba": "Best xwOBA", "worst_pitch": "Worst Pitch",
+        "fb_pct": "FB%", "la": "LA", "k_pct": "K%", "bb_pct": "BB%", "whiff_pct": "Whiff%",
+        "home_run": "HR", "recent_hr": "L15 HR", "sleeper_score": "Sleeper", "gs_score": "GS"
+    }
+    sty = sty.relabel_index([rename_mapping_m.get(c, c) for c in display.columns], axis="columns")
     st.dataframe(sty, hide_index=True, use_container_width=True)
 
 def _get_label_string(row):
