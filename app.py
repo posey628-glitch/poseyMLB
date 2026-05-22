@@ -1,6 +1,6 @@
 """
-app.py — Poseymlb Daily HR and K Prop Betting Dashboard
-======================================================
+app.py — Posey MLB HR & K Data Dashboard
+==========================================
 Built for isolated daily HR and K prop research.
 
 Top-level sections:
@@ -445,12 +445,13 @@ def _render_isolated_matchup(df: pd.DataFrame):
         "home_run": "HR", "recent_hr": "L15 HR", "sleeper_score": "Sleeper", "gs_score": "GS"
     }
     sty = sty.relabel_index([rename_mapping_m.get(c, c) for c in display.columns], axis="columns")
-    st.dataframe(sty, hide_index=True, use_container_width=True)
+    
+    # Restrict window dimensions cleanly for a uniform standard footprint
+    st.dataframe(sty, hide_index=True, use_container_width=True, height=325)
 
 def _get_label_string(row):
     try:
         t = pd.to_datetime(row["gameTime"]).tz_convert("US/Eastern")
-        # Cleansed Local Eastern Time Stamp configuration
         return f"🏟️ {row['away_team_abbr']} @ {row['home_team_abbr']} · ⏰ {t.strftime('%-I:%M %p ET')}"
     except Exception:
         return f"🏟️ {row['away_team_abbr']} @ {row['home_team_abbr']}"
@@ -475,7 +476,6 @@ for _, game in slate.iterrows():
         
         if vegas and vegas.get("total"):
             total_val = vegas['total']
-            # Sharp color flag warning condition engine adjustment
             total_delta = "🔥 High Game Total" if total_val >= 8.5 else f"AT: {vegas.get('away_implied', '—')} | HT: {vegas.get('home_implied', '—')}"
             env4.metric("Vegas Line (O/U)", f"{total_val:.1f}", delta=total_delta)
         else:
@@ -517,7 +517,10 @@ for _, game in slate.iterrows():
                     # 🔬 Advanced Pitch Sequence Profile (2-Strike Put-Away Engine)
                     # ---------------------------------------------------------------------------
                     if not pitcher_arsenal_all.empty:
-                        opp_p_id = game["home_pitcher_id"] if best_hitter_row.get("player_id") in ctx["away_matchup"]["player_id"].values else game["away_pitcher_id"]
+                        # Extract list identities from static dictionary elements to dodge series index exceptions
+                        away_player_ids = [p["id"] for p in ctx["away_lineup"] if "id" in p]
+                        opp_p_id = game["home_pitcher_id"] if best_hitter_row.get("player_id") in away_player_ids else game["away_pitcher_id"]
+                        
                         p_arsenal = pitcher_arsenal_all[pitcher_arsenal_all.get("player_id") == opp_p_id] if "player_id" in pitcher_arsenal_all.columns else pd.DataFrame()
                         
                         if not p_arsenal.empty and "put_away" in p_arsenal.columns:
@@ -573,7 +576,7 @@ for _, game in slate.iterrows():
                     if k_subset:
                         k_sty = k_sty.background_gradient(cmap="RdYlGn", subset=k_subset)
                         
-                    # Sharp betting context display column updates
+                    # Custom format presentation mapping labels
                     rename_k_labels = {"Line Threshold": "Sportsbook Threshold", "Probability Edge": "Probability of Over"}
                     k_sty = k_sty.relabel_index([rename_k_labels.get(c, c) for c in lines_df.columns], axis="columns")
                     
