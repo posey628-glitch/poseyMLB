@@ -310,7 +310,7 @@ progress.empty()
 
 
 # ---------------------------------------------------------------------------
-# 📋 Slate Summary — Starting Pitchers (Fixed Formatting KeyError)
+# 📋 Slate Summary — Starting Pitchers (Absolute Reset-Index Resolution)
 # ---------------------------------------------------------------------------
 
 st.subheader("📋 Starting Pitcher Overview")
@@ -338,13 +338,20 @@ if not pitcher_slate.empty:
     base_cols = ["verdict", "pitcher_name", "team", "home_away", "opp", "throws"]
     existing_data_cols = [c for c in rename_mapping.keys() if c in pitcher_slate.columns]
     
-    display = pitcher_slate[base_cols + existing_data_cols].rename(columns={
+    # Pristine serialization isolation block
+    display = pitcher_slate[base_cols + existing_data_cols].copy()
+    display = display.rename(columns={
         **{"verdict": "", "pitcher_name": "Pitcher", "team": "Tm", "home_away": "", "opp": "Opp", "throws": "T"},
         **rename_mapping
     })
     
-    green_p = [c for c in ["Test", "kHR", "Proj K", "K/9", "K%", "Whiff%", "CSW%", "L5 K/9"] if c in display.columns]
-    red_p = [c for c in ["ERA", "WHIP", "BB/9", "HR/9", "xwOBA", "Brl%", "L5 ERA"] if c in display.columns]
+    # Force single baseline evaluation tracking
+    display = display.reset_index(drop=True)
+    
+    green_p = [c for c in ["Test", "kHR", "Proj K", "K/9", "K%", "Whiff%", "CSW%", "L5 K/9"] 
+               if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
+    red_p = [c for c in ["ERA", "WHIP", "BB/9", "HR/9", "xwOBA", "Brl%", "L5 ERA"] 
+             if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
     
     sty = display.style
     if green_p:
@@ -352,26 +359,18 @@ if not pitcher_slate.empty:
     if red_p:
         sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_p)
         
-    # Dynamically build the format dictionary to ensure we NEVER call format on a non-existent column
     format_dict = {}
-    
     one_decimal_targets = ["Test", "kHR", "Proj K", "K%", "Whiff%", "CSW%", "Brl%"]
     two_decimal_targets = ["ERA", "WHIP", "K/9", "BB/9", "HR/9", "L5 ERA", "L5 K/9"]
     
     for c in one_decimal_targets:
-        if c in display.columns:
-            format_dict[c] = "{:.1f}"
-            
+        if c in display.columns: format_dict[c] = "{:.1f}"
     for c in two_decimal_targets:
-        if c in display.columns:
-            format_dict[c] = "{:.2f}"
+        if c in display.columns: format_dict[c] = "{:.2f}"
             
-    if "xwOBA" in display.columns:
-        format_dict["xwOBA"] = "{:.3f}"
-    if "Rest" in display.columns:
-        format_dict["Rest"] = "{:.0f}d"
-    if "Pitches" in display.columns:
-        format_dict["Pitches"] = "{:.0f}"
+    if "xwOBA" in display.columns: format_dict["xwOBA"] = "{:.3f}"
+    if "Rest" in display.columns: format_dict["Rest"] = "{:.0f}d"
+    if "Pitches" in display.columns: format_dict["Pitches"] = "{:.0f}"
 
     sty = sty.format(format_dict, na_rep="—")
     st.dataframe(sty, hide_index=True, use_container_width=True, height=350)
@@ -407,10 +406,14 @@ def _render_isolated_matchup(df: pd.DataFrame):
         "fb_pct": "FB%", "la": "LA", "k_pct": "K%", "bb_pct": "BB%", "whiff_pct": "Whiff%",
         "home_run": "HR", "recent_hr": "L15 HR", "sleeper_score": "Sleeper", "gs_score": "GS",
     })
+    
+    display = display.reset_index(drop=True)
 
     green_m = [c for c in ["HR Game%", "HR PA%", "Matchup", "Test", "Pitch Match", "ISO", "xwOBA", "xwOBAcon",
-                           "Brl%", "FB%", "BB%", "HR", "L15 HR", "Sleeper", "GS"] if c in display.columns]
-    red_m = [c for c in ["K%", "Whiff%"] if c in display.columns]
+                           "Brl%", "FB%", "BB%", "HR", "L15 HR", "Sleeper", "GS"] 
+               if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
+    red_m = [c for c in ["K%", "Whiff%"] 
+             if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
 
     sty = display.style
     if green_m:
@@ -418,13 +421,10 @@ def _render_isolated_matchup(df: pd.DataFrame):
     if red_m:
         sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_m)
         
-    # Dynamically build formats for isolated matchup grids as well
     m_format_dict = {}
-    
     m_one_decimal = ["Matchup", "Test", "Pitch Match", "Sleeper"]
     for c in m_one_decimal:
-        if c in display.columns:
-            m_format_dict[c] = "{:.1f}"
+        if c in display.columns: m_format_dict[c] = "{:.1f}"
             
     if "HR Game%" in display.columns: m_format_dict["HR Game%"] = "{:.1f}%"
     if "HR PA%" in display.columns: m_format_dict["HR PA%"] = "{:.2f}%"
@@ -513,9 +513,16 @@ for _, game in slate.iterrows():
                         {"Line Threshold": "Over 7.5 Strikeouts", "Probability Edge": p_proj.get("p_over_7.5", 0)},
                         {"Line Threshold": "Over 8.5 Strikeouts", "Probability Edge": p_proj.get("p_over_8.5", 0)},
                     ])
+                    
+                    lines_df = lines_df.reset_index(drop=True)
+                    k_subset = ["Probability Edge"] if "Probability Edge" in lines_df.columns and pd.to_numeric(lines_df["Probability Edge"], errors='coerce').notna().any() else []
+                    
+                    k_sty = lines_df.style
+                    if k_subset:
+                        k_sty = k_sty.background_gradient(cmap="RdYlGn", subset=k_subset)
+                        
                     st.dataframe(
-                        lines_df.style.background_gradient(cmap="RdYlGn", subset=["Probability Edge"])
-                        .format({"Probability Edge": "{:.0%}"}, na_rep="—"),
+                        k_sty.format({"Probability Edge": "{:.0%}"}, na_rep="—"),
                         hide_index=True, use_container_width=True
                     )
                     
@@ -529,7 +536,7 @@ for _, game in slate.iterrows():
                         st.markdown(f"**{game['away_team_abbr']} Lineup History vs. Pitcher**")
                         bvp_a = bvp_for_lineup(ctx["away_lineup"], int(game["home_pitcher_id"]))
                         if not bvp_a.empty:
-                            st.dataframe(bvp_a, hide_index=True, use_container_width=True)
+                            st.dataframe(bvp_a.reset_index(drop=True), hide_index=True, use_container_width=True)
                         else:
                             st.caption("No historical head-to-head tracking found for this lineup split.")
                             
@@ -542,4 +549,4 @@ for _, game in slate.iterrows():
                                 if not a.empty:
                                     summary_cols = [c for c in ["pitch_name", "pitch_usage", "ba", "slg", "woba", "whiff_percent"] if c in a.columns]
                                     a_disp = a[summary_cols].rename(columns={"pitch_name": "Pitch", "pitch_usage": "Usage%", "whiff_percent": "Whiff%"})
-                                    st.dataframe(a_disp.style.format({"Usage%": "{:.1f}%", "Whiff%": "{:.1f}%"}, na_rep="—"), hide_index=True, use_container_width=True)
+                                    st.dataframe(a_disp.reset_index(drop=True).style.format({"Usage%": "{:.1f}%", "Whiff%": "{:.1f}%"}, na_rep="—"), hide_index=True, use_container_width=True)
