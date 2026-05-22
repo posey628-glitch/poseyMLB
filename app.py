@@ -7,7 +7,13 @@ import requests
 import re
 
 # ---------------- IMPORTS ----------------
-from data_fetcher import get_slate, get_hitter_stats, get_pitcher_stats, get_hitter_traditional
+from data_fetcher import (
+    get_slate,
+    get_hitter_stats,
+    get_pitcher_stats,
+    get_hitter_traditional,
+    get_lineup
+)
 from models import build_matchup_table
 from park_factors import get_park
 from weather import fetch_weather, hr_multiplier
@@ -37,7 +43,7 @@ def c_trad():
 def c_weather(lat, lon):
     return fetch_weather(lat, lon, datetime.now())
 
-# ✅ PLAYER LOOKUP (INLINE — NO IMPORT ERROR)
+# ✅ PLAYER LOOKUP (INLINE, NO ERRORS)
 @st.cache_data(ttl=86400)
 def get_player_lookup():
     try:
@@ -45,24 +51,15 @@ def get_player_lookup():
         r = requests.get(url, timeout=10)
         data = r.json()
 
-        rows = []
-        for p in data.get("people", []):
-            rows.append({
-                "player_id": p.get("id"),
-                "player_name": p.get("fullName")
-            })
-
-        return pd.DataFrame(rows)
+        return pd.DataFrame([
+            {"player_id": p.get("id"), "player_name": p.get("fullName")}
+            for p in data.get("people", [])
+        ])
 
     except:
         return pd.DataFrame(columns=["player_id", "player_name"])
 
 # ---------------- HELPERS ----------------
-def clean_name(name):
-    if not isinstance(name, str):
-        return name
-    return re.sub(r"[^a-zA-Z\s]", "", name).lower().strip()
-
 def color_row(row):
     edge = row.get("model_edge")
 
@@ -84,9 +81,10 @@ with st.sidebar:
     search = st.text_input("Search Player")
     min_hr = st.slider("Min HR %", 0.0, 50.0, 5.0)
 
-# ---------------- LOAD DATA ----------------
+# ---------------- LOAD ----------------
 slate = c_slate(str(selected_date))
 if slate.empty:
+    st.warning("No games found")
     st.stop()
 
 hitter = c_hitter().merge(c_trad(), on="player_id", how="left")
@@ -108,17 +106,37 @@ for g in slate.itertuples():
 
     park = get_park(getattr(g, "venue", ""))
 
-    weather = None
+    weather = {}
     if park.get("lat"):
         weather = c_weather(park.get("lat"), park.get("lon"))
-    else:
-        weather = {}
 
     hr_mult, _ = hr_multiplier(weather, park)
 
-    # Minimal matchup build (safe)
-    away_df = build_matchup_table([], pd.Series({}), hitter, pitcher)
-    home_df = build_matchup_table([], pd.Series({}), hitter, pitcher)
+    # ✅ REAL LINEUPS
+    away_lineup = get_lineup(g.gamePk, "away")
+    home_lineup = get_lineup(g.gamePk, "home")
+
+    # ✅ fallback if lineup missing
+    if not away_lineup:
+        away_lineup = hitter.head(9)["player_id"].tolist()
+
+    if not home_lineup:
+        home_lineup = hitter.head(9)["player_id"].tolist()
+
+    # ✅ build matchup tables
+    away_df = build_matchup_table(
+        away_lineup,
+        pd.Series({}),
+        hitter,
+        pitcher
+    )
+
+    home_df = build_matchup_table(
+        home_lineup,
+        pd.Series({}),
+        hitter,
+        pitcher
+    )
 
     for df in [away_df, home_df]:
 
@@ -162,11 +180,15 @@ def render(df):
     cols = [c for c in [
         "player_name",
         "hr_game_pct",
-        "model_edge"
+        "model_edge",
+        "iso",
+        "xwoba"
     ] if c in df.columns]
 
-    styled = df[cols].style.apply(color_row, axis=1)
-    st.dataframe(styled, use_container_width=True)
+    st.dataframe(
+        df[cols].style.apply(color_row, axis=1),
+        use_container_width=True
+    )
 
 # ---------------- UI ----------------
 st.title("⚾ MLB HR Dashboard")
@@ -175,12 +197,13 @@ for g in slate.itertuples():
 
     st.markdown(f"### {g.away_team_abbr} @ {g.home_team_abbr}")
 
-    ctx = games[g.gamePk]
+    ctx = games.get(g.gamePk, {})
 
     tab1, tab2 = st.tabs(["Away","Home"])
 
     with tab1:
-        render(ctx["away"])
+        render(ctx.get("away", pd.DataFrame()))
 
     with tab2:
-        render(ctx["home"])
+        render(ctx.get("home", pd.DataFrame()))
+
