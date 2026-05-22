@@ -5,7 +5,6 @@ import pandas as pd
 import streamlit as st
 import re
 
-# ---------------- IMPORTS ----------------
 from data_fetcher import *
 from models import *
 from park_factors import get_park
@@ -16,7 +15,7 @@ from game_context import *
 from props import *
 
 # ---------------- PAGE ----------------
-st.set_page_config(layout="wide", page_title="Posey MLB HR & K", page_icon="⚾")
+st.set_page_config(layout="wide", page_title="Posey MLB HR & K")
 
 # ---------------- CACHE ----------------
 @st.cache_data(ttl=1800)
@@ -31,11 +30,11 @@ def c_pitcher(): return get_pitcher_stats()
 @st.cache_data(ttl=1800)
 def c_h_trad(): return get_hitter_traditional()
 
-@st.cache_data(ttl=3600)
-def c_fangraphs(): return get_fangraphs_hitter_stats()
-
 @st.cache_data(ttl=86400)
 def c_lookup(): return get_player_lookup()
+
+@st.cache_data(ttl=3600)
+def c_fg(): return get_fangraphs_hitter_stats()
 
 @st.cache_data(ttl=900)
 def c_weather(lat, lon, dt):
@@ -43,14 +42,12 @@ def c_weather(lat, lon, dt):
 
 # ---------------- HELPERS ----------------
 
-def clean_name(name: str):
+def clean_name(name):
     if not isinstance(name, str):
         return name
-    name = re.sub(r"[^a-zA-Z\s]", "", name)
-    return name.lower().strip()
+    return re.sub(r"[^a-zA-Z\s]", "", name).lower().strip()
 
-def apply_stat_fallbacks(df):
-
+def apply_fallback(df):
     df["data_source"] = "statcast"
 
     if "iso" in df.columns and "iso_fg" in df.columns:
@@ -58,196 +55,124 @@ def apply_stat_fallbacks(df):
         df.loc[mask, "iso"] = df.loc[mask, "iso_fg"]
         df.loc[mask, "data_source"] = "fangraphs"
 
-    if "xwoba" in df.columns and "woba_fg" in df.columns:
-        df["xwoba"] = df["xwoba"].combine_first(df["woba_fg"])
-
     return df
 
-def add_data_score(df):
+def add_score(df):
     scores = []
-    for row in df.itertuples():
+    for r in df.itertuples():
         s = 0
-        if not pd.isna(getattr(row,"iso",None)): s += 2
-        if not pd.isna(getattr(row,"xwoba",None)): s += 2
-        if not pd.isna(getattr(row,"barrel_pct",None)): s += 2
+        if not pd.isna(getattr(r,"iso",None)): s+=2
+        if not pd.isna(getattr(r,"xwoba",None)): s+=2
         scores.append(s)
     df["data_score"] = scores
     return df
 
-def row_color(row):
-
-    e = row.get("model_edge", None)
-
-    if pd.isna(e):
-        return [""] * len(row)
-
-    if e >= 8:
-        return ["background-color: rgba(0,255,0,0.15)"] * len(row)
-    elif e >= 4:
-        return ["background-color: rgba(255,255,0,0.15)"] * len(row)
-    elif e >= 0:
-        return ["background-color: rgba(255,165,0,0.15)"] * len(row)
-    else:
-        return ["background-color: rgba(255,0,0,0.10)"] * len(row)
+def color(row):
+    e = row.get("model_edge")
+    if pd.isna(e): return [""]*len(row)
+    if e >= 8: return ["background-color:#b6fcb6"]*len(row)
+    if e >= 4: return ["background-color:#fff3b0"]*len(row)
+    if e >= 0: return ["background-color:#ffd6a5"]*len(row)
+    return ["background-color:#ffadad"]*len(row)
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
-    st.title("⚾ MLB Props")
-    selected_date = st.date_input("Slate", value=date.today())
-    search_player = st.text_input("Search Player")
-    min_hr = st.slider("Min HR%", 0.0, 50.0, 5.0)
-
-    if st.button("Refresh"):
-        st.cache_data.clear()
-        st.rerun()
+    date_sel = st.date_input("Slate", value=date.today())
+    search = st.text_input("Search")
+    min_hr = st.slider("Min HR %",0.0,50.0,5.0)
 
 # ---------------- LOAD ----------------
+slate = c_slate(date_sel.isoformat())
+if slate.empty: st.stop()
 
-slate = c_slate(selected_date.isoformat())
-if slate.empty:
-    st.stop()
+hitter = c_hitter().merge(c_h_trad(), on="player_id", how="left")
 
-# ✅ load core stats
-hitter_stats = c_hitter().merge(c_h_trad(), on="player_id", how="left")
-
-# ✅ PLAYER LOOKUP (CRITICAL FIX)
 lookup = c_lookup()
-hitter_stats = hitter_stats.merge(lookup, on="player_id", how="left")
+hitter = hitter.merge(lookup, on="player_id", how="left")
 
-if "player_name" not in hitter_stats.columns:
-    st.error("Player lookup failed — cannot map player IDs to names.")
-    st.stop()
+if "player_name" not in hitter.columns:
+    st.error("Player lookup failed"); st.stop()
 
-# ✅ CLEAN NAME FOR FG MATCH
-hitter_stats["player_name_clean"] = hitter_stats["player_name"].apply(clean_name)
+hitter["player_name_clean"] = hitter["player_name"].apply(clean_name)
 
-# ✅ FANGRAPHS
-fg = c_fangraphs()
-if not fg.empty and "player_name_clean" in fg.columns:
-    hitter_stats = hitter_stats.merge(fg, on="player_name_clean", how="left")
+fg = c_fg()
+if not fg.empty:
+    hitter = hitter.merge(fg, on="player_name_clean", how="left")
 
-pitcher_stats = c_pitcher()
+pitcher = c_pitcher()
 
 # ---------------- ENGINE ----------------
-
-game_map = {}
+games = {}
 
 for g in slate.itertuples():
 
-    park = get_park(getattr(g, "venue", ""))
+    park = get_park(getattr(g,"venue",""))
+    wx = c_weather(park.get("lat"), park.get("lon"), datetime.now()) if park.get("lat") else {}
+    mult,_ = hr_multiplier(wx, park)
 
-    weather = c_weather(
-        park.get("lat"),
-        park.get("lon"),
-        datetime.now()
-    ) if park.get("lat") else {}
+    away = get_lineup(g.gamePk,"away")
+    home = get_lineup(g.gamePk,"home")
 
-    wx_mult, wx_text = hr_multiplier(weather, park)
-    park_mult = park.get("hr_factor", 100) / 100
-
-    away_lineup = get_lineup(g.gamePk, "away")
-    home_lineup = get_lineup(g.gamePk, "home")
-
-    ap = pitcher_stats[pitcher_stats.player_id == g.away_pitcher_id]
-    hp = pitcher_stats[pitcher_stats.player_id == g.home_pitcher_id]
+    ap = pitcher[pitcher.player_id==g.away_pitcher_id]
+    hp = pitcher[pitcher.player_id==g.home_pitcher_id]
 
     ap = ap.iloc[0].to_dict() if len(ap) else {}
     hp = hp.iloc[0].to_dict() if len(hp) else {}
 
-    away_df = build_matchup_table(away_lineup, pd.Series(hp), hitter_stats, pitcher_stats)
-    home_df = build_matchup_table(home_lineup, pd.Series(ap), hitter_stats, pitcher_stats)
+    a = build_matchup_table(away,pd.Series(hp),hitter,pitcher)
+    h = build_matchup_table(home,pd.Series(ap),hitter,pitcher)
 
-    away_df = apply_stat_fallbacks(away_df)
-    home_df = apply_stat_fallbacks(home_df)
+    for df,p in [(a,hp),(h,ap)]:
 
-    away_df = add_data_score(away_df)
-    home_df = add_data_score(home_df)
+        if df.empty: continue
 
-    for df, p in [(away_df, hp), (home_df, ap)]:
+        df = apply_fallback(df)
+        df = add_score(df)
 
-        if df.empty:
-            continue
+        df = hr_probability(df,pd.Series(p),mult)
 
-        df = hr_probability(df, pd.Series(p), wx_mult)
+        if "hr_prob" not in df.columns: continue
 
-        if "hr_prob" not in df.columns:
-            continue
+        vals,edges = [],[]
 
-        hr_game, edges = [], []
+        for r in df.itertuples():
+            pa = hr_prob_per_pa(r._asdict(),p)
+            ghr = hr_prob_full_game(pa)*100
+            vals.append(ghr)
+            edges.append(ghr-12.5)
 
-        for row in df.itertuples():
-            pa = hr_prob_per_pa(row._asdict(), p)
-            game_hr = hr_prob_full_game(pa) * 100
+        df["hr_game_pct"]=vals
+        df["model_edge"]=edges
 
-            hr_game.append(game_hr)
-            edges.append(game_hr - 12.5)
-
-        df["hr_game_pct"] = hr_game
-        df["model_edge"] = edges
-
-    game_map[g.gamePk] = dict(
-        away=away_df,
-        home=home_df,
-        weather=wx_text
-    )
-
-# ---------------- VALIDATION ----------------
-
-st.subheader("🧪 Data Validation")
-
-all_df = pd.concat(
-    [ctx["away"] for ctx in game_map.values()] +
-    [ctx["home"] for ctx in game_map.values()],
-    ignore_index=True
-)
-
-if not all_df.empty:
-    st.write("Total Hitters:", len(all_df))
-    if "iso" in all_df.columns:
-        st.write("Missing ISO:", all_df["iso"].isna().sum())
+    games[g.gamePk]=dict(away=a,home=h)
 
 # ---------------- RENDER ----------------
-
 def render(df):
 
     if df.empty:
-        st.write("No data")
-        return
+        st.write("No data"); return
 
-    if search_player:
-        df = df[df["player_name"].str.contains(search_player, case=False, na=False)]
+    if search:
+        df=df[df["player_name"].str.contains(search,case=False,na=False)]
 
     if "hr_game_pct" in df.columns:
-        df = df[df["hr_game_pct"] >= min_hr]
+        df=df[df["hr_game_pct"]>=min_hr]
 
-    cols = [c for c in [
-        "player_name",
-        "hr_game_pct",
-        "model_edge",
-        "iso",
-        "xwoba",
-        "data_score",
-        "data_source"
+    cols=[c for c in [
+        "player_name","hr_game_pct","model_edge","iso","xwoba","data_score","data_source"
     ] if c in df.columns]
 
-    styled = df[cols].style.apply(row_color, axis=1)
-    st.dataframe(styled, use_container_width=True)
+    st.dataframe(df[cols].style.apply(color,axis=1), use_container_width=True)
 
 # ---------------- UI ----------------
-
-st.subheader("🎮 Games")
+st.title("⚾ MLB HR Dashboard")
 
 for g in slate.itertuples():
-
-    ctx = game_map[g.gamePk]
+    ctx = games[g.gamePk]
 
     st.markdown(f"### {g.away_team_abbr} @ {g.home_team_abbr}")
 
-    tab1, tab2 = st.tabs(["Away", "Home"])
+    t1,t2 = st.tabs(["Away","Home"])
 
-    with tab1:
-        render(ctx["away"])
-
-    with tab2:
-        render(ctx["home"])
-
+    with t1: render(ctx["away"])
+    with t2: render(ctx["home"])
