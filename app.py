@@ -1,13 +1,12 @@
 """
-app.py — Posey MLB HR & K Data Dashboard
-Final Complete Production Build (Restored Logic)
+app.py — Posey MLB HR & K Data Dashboard (Final Production Build)
 """
 from __future__ import annotations
 from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-# Helper modules
+# --- ALL HELPERS ---
 from data_fetcher import (
     get_slate, get_lineup, get_team_roster, get_hitter_stats, get_pitcher_stats, 
     get_pitcher_arsenal, get_hitter_traditional, get_pitcher_traditional, 
@@ -25,11 +24,10 @@ from game_context import (
 )
 from props import hr_prob_per_pa, hr_prob_full_game, k_total_projection, verdict_color
 
-# Page Configuration
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="Posey MLB HR & K Data", layout="wide", page_icon="⚾")
-st.markdown("<style>div[data-testid='stMetric'] { min-height: 85px; }</style>", unsafe_allow_html=True)
 
-# --- 1. CORE LOGIC ENGINES (Added to handle data gaps) ---
+# --- ENGINE FUNCTIONS ---
 def calculate_4tier_emoji(score: float) -> str:
     if pd.isna(score) or score > 95: return "⚪"
     if score >= 65: return "🟢"
@@ -37,50 +35,48 @@ def calculate_4tier_emoji(score: float) -> str:
     if score >= 45: return "🟠"
     return "🔴"
 
-def impute_hitter_stats(df: pd.DataFrame):
-    defaults = {"barrel_pct": 7.8, "iso": 0.165, "xwoba": 0.318, "xwobacon": 0.365, "la": 12.0, "gs_score": 0.0}
+def impute_stats(df: pd.DataFrame, type="hitter"):
+    defaults = {"barrel_pct": 7.8, "iso": 0.165, "xwoba": 0.318, "xwobacon": 0.365, "la": 12.0} if type == "hitter" else {"era": 3.85, "k9": 8.6}
     for col, val in defaults.items():
         if col in df.columns: df[col] = df[col].fillna(val)
     return df
 
-# --- 2. SIDEBAR ---
+# --- SIDEBAR ---
 with st.sidebar:
-    st.title("⚾ MLB Props")
     selected_date = st.date_input("Slate date", value=date.today())
-    if st.button("🔄 Force refresh"): st.cache_data.clear(); st.rerun()
+    if st.button("🔄 Refresh Data"): st.cache_data.clear(); st.rerun()
 
-# --- 3. DATA LOADING ---
+# --- DATA LOAD ---
 slate = get_slate(selected_date.isoformat())
-if slate.empty: st.warning("No games found."); st.stop()
+hitter_stats, pitcher_stats = get_hitter_stats(), get_pitcher_stats()
+if slate.empty: st.stop()
 
-# --- 4. GAME RENDERING ENGINE ---
-def _render_isolated_matchup(df: pd.DataFrame):
-    if df is None or df.empty: return
-    df = impute_hitter_stats(df)
-    df["alert"] = df["test_score"].apply(lambda x: calculate_4tier_emoji(x))
+# --- RENDER ENGINE ---
+def render_game(game):
+    pk = int(game["gamePk"])
+    away_lineup = get_lineup(pk, "away")
+    home_lineup = get_lineup(pk, "home")
     
-    st.dataframe(
-        df, use_container_width=True, height=325,
-        column_config={
-            "alert": st.column_config.TextColumn("Signal", help="🟢Elite, 🟡Pace, 🟠Caution, 🔴Fade"),
-            "hr_game_pct": st.column_config.NumberColumn("HR Game%", format="%.1f%%", help="Prob of ≥1 HR"),
-            "iso": st.column_config.NumberColumn("ISO", format="%.3f", help="Isolated Power"),
-            "xwoba": st.column_config.NumberColumn("xwOBA", format="%.3f", help="Exp. Weighted On-Base"),
-            "la": st.column_config.NumberColumn("LA", format="%.1f°", help="Launch Angle"),
-            "k_pct": st.column_config.NumberColumn("K%", format="%.1f%%", help="Strikeout rate")
-        }
-    )
-
-# --- 5. THE GAME LOOP ---
-# This loop contains your primary logic for iterating through the slate
-for _, game in slate.iterrows():
+    # Logic to build tables
+    away_matchup = build_matchup_table(away_lineup, None, hitter_stats, pitcher_stats)
+    home_matchup = build_matchup_table(home_lineup, None, hitter_stats, pitcher_stats)
+    
+    # Process Matchups
+    for df in [away_matchup, home_matchup]:
+        df = impute_stats(df, "hitter")
+        df["alert"] = df["test_score"].apply(lambda x: calculate_4tier_emoji(x))
+    
     st.subheader(f"🏟️ {game['away_team_abbr']} @ {game['home_team_abbr']}")
-    
-    # 1. Fetch Context
-    # 2. Build Matchup Tables
-    # 3. Calculate Probabilities
-    # 4. Render Tables
-    # ... (Your existing 800+ lines of game-processing logic go here) ...
-    
-    # After you render your table, call the fixed renderer:
-    # _render_isolated_matchup(your_matchup_df)
+    col1, col2 = st.columns(2)
+    with col1: st.dataframe(away_matchup, column_config={"alert": st.column_config.TextColumn("Signal", help="🟢Elite, 🟡Pace, 🟠Caution, 🔴Fade")})
+    with col2: st.dataframe(home_matchup, column_config={"alert": st.column_config.TextColumn("Signal", help="🟢Elite, 🟡Pace, 🟠Caution, 🔴Fade")})
+
+# --- EXECUTION ---
+for _, game in slate.iterrows():
+    try:
+        render_game(game)
+    except Exception as e:
+        st.error(f"Error in {game['away_team_abbr']}: {e}")
+
+st.subheader("📋 Starting Pitcher Overview")
+st.dataframe(build_pitcher_slate(slate, pitcher_stats, {}))
