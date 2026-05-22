@@ -205,10 +205,10 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         # Find catcher in lineup
         for lineup, target_var in [(away_lineup, "away_framing_factor"),
                                      (home_lineup, "home_framing_factor")]:
-            catchers = [p for p in lineup if p.get("position") == "C"]
-            if catchers:
+           catchers = [p for p in lineup if p.get("position") == "C"]
+            if catchers and "player_id" in framing_df.columns:
                 cid = catchers[0]["id"]
-                f_row = framing_df[framing_df.get("player_id") == cid]
+                f_row = framing_df[framing_df["player_id"] == cid]
                 if len(f_row) and "framing_k_factor" in f_row.columns:
                     if target_var == "away_framing_factor":
                         away_framing_factor = float(f_row.iloc[0]["framing_k_factor"])
