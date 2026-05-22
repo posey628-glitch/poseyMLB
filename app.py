@@ -55,19 +55,18 @@ def get_player_lookup():
 
 # ---------------- HELPERS ----------------
 def color_row(row):
-    edge = row.get("model_edge")
+    e = row.get("model_edge")
 
-    if pd.isna(edge):
+    if pd.isna(e):
         return [""] * len(row)
 
-    if edge >= 8:
+    if e >= 8:
         return ["background-color:#b6fcb6"] * len(row)
-    elif edge >= 4:
+    elif e >= 4:
         return ["background-color:#fff3b0"] * len(row)
-    elif edge >= 0:
+    elif e >= 0:
         return ["background-color:#ffd6a5"] * len(row)
-    else:
-        return ["background-color:#ffadad"] * len(row)
+    return ["background-color:#ffadad"] * len(row)
 
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
@@ -84,13 +83,16 @@ if slate.empty:
 
 hitter = c_hitter().merge(c_trad(), on="player_id", how="left")
 
-# ✅ Add names via ID (bulletproof)
+# ✅ add player names (ID → name)
 lookup = get_player_lookup()
-hitter = hitter.merge(lookup, on="player_id", how="left", validate="many_to_one")
+hitter = hitter.merge(lookup, on="player_id", how="left")
 
 if "player_name" not in hitter.columns:
-    st.error("Player name lookup failed")
+    st.error("Player lookup failed")
     st.stop()
+
+# ✅ build name map (CRITICAL FIX)
+id_to_name = dict(zip(hitter["player_id"], hitter["player_name"]))
 
 pitcher = c_pitcher()
 
@@ -107,20 +109,31 @@ for g in slate.itertuples():
 
     hr_mult, _ = hr_multiplier(weather, park)
 
-    # ✅ get real lineups
+    # ✅ fetch lineups
     away_raw = get_lineup(g.gamePk, "away")
     home_raw = get_lineup(g.gamePk, "home")
 
-    # ✅ fallback if empty
+    # ✅ normalize to IDs
     if not away_raw:
-        away_lineup = [{"id": pid} for pid in hitter.head(9)["player_id"]]
+        away_ids = hitter.head(9)["player_id"].tolist()
     else:
-        away_lineup = [{"id": p} if isinstance(p, int) else p for p in away_raw]
+        away_ids = [p if isinstance(p, int) else p.get("id") for p in away_raw]
 
     if not home_raw:
-        home_lineup = [{"id": pid} for pid in hitter.head(9)["player_id"]]
+        home_ids = hitter.head(9)["player_id"].tolist()
     else:
-        home_lineup = [{"id": p} if isinstance(p, int) else p for p in home_raw]
+        home_ids = [p if isinstance(p, int) else p.get("id") for p in home_raw]
+
+    # ✅ FINAL FIX: attach names
+    away_lineup = [
+        {"id": pid, "name": id_to_name.get(pid, "Unknown")}
+        for pid in away_ids if pd.notna(pid)
+    ]
+
+    home_lineup = [
+        {"id": pid, "name": id_to_name.get(pid, "Unknown")}
+        for pid in home_ids if pd.notna(pid)
+    ]
 
     # ✅ build matchup tables
     away_df = build_matchup_table(away_lineup, pd.Series({}), hitter, pitcher)
@@ -134,8 +147,7 @@ for g in slate.itertuples():
         if "hr_prob" not in df.columns:
             continue
 
-        hr_vals = []
-        edge_vals = []
+        hr_vals, edge_vals = [], []
 
         for row in df.itertuples():
             pa = hr_prob_per_pa(row._asdict(), {})
@@ -147,7 +159,10 @@ for g in slate.itertuples():
         df["hr_game_pct"] = hr_vals
         df["model_edge"] = edge_vals
 
-    games[g.gamePk] = {"away": away_df, "home": home_df}
+    games[g.gamePk] = {
+        "away": away_df,
+        "home": home_df
+    }
 
 # ---------------- RENDER ----------------
 def render(df):
@@ -171,12 +186,13 @@ def render(df):
     ] if c in df.columns]
 
     if not cols:
-        st.write("No displayable columns")
+        st.write("No displayable data")
         return
 
-    styled = df[cols].style.apply(color_row, axis=1)
-
-    st.dataframe(styled, use_container_width=True)
+    st.dataframe(
+        df[cols].style.apply(color_row, axis=1),
+        use_container_width=True
+    )
 
 # ---------------- UI ----------------
 st.title("⚾ MLB HR Dashboard")
@@ -187,12 +203,10 @@ for g in slate.itertuples():
 
     ctx = games.get(g.gamePk, {"away": pd.DataFrame(), "home": pd.DataFrame()})
 
-    tab1, tab2 = st.tabs(["Away", "Home"])
+    t1, t2 = st.tabs(["Away", "Home"])
 
-    with tab1:
+    with t1:
         render(ctx["away"])
 
-    with tab2:
+    with t2:
         render(ctx["home"])
-
-
