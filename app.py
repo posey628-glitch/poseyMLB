@@ -1,6 +1,6 @@
 """
-app.py — MLB Daily Prop Betting Dashboard
-==========================================
+app.py — Poseymlb Daily HR and K Prop Betting Dashboard
+======================================================
 Built for isolated daily HR and K prop research.
 
 Top-level sections:
@@ -41,7 +41,23 @@ from props import (
 )
 
 
-st.set_page_config(page_title="MLB Prop Dashboard", layout="wide", page_icon="⚾")
+# Updated customized browser page configuration title
+st.set_page_config(page_title="Posey MLB HR & K Data", layout="wide", page_icon="⚾")
+
+
+# ---------------------------------------------------------------------------
+# Layout Alignment Rules (UI Polish)
+# ---------------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    div[data-testid="stMetric"] {
+        min-height: 85px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 
 # ---------------------------------------------------------------------------
@@ -132,10 +148,9 @@ st.caption(f"{len(slate)} games · {len(hitter_stats)} hitters · {len(pitcher_s
 # Quick Reference Dashboard Legend
 # ---------------------------------------------------------------------------
 
-with st.expander("📖 Dashboard Metric Legend & Quick Reference Guide", expanded=False):
+with st.expander("📖 Dashboard Metric Legend & Quick Reference (💡 Click Column Header Names below to Sort High/Low)", expanded=False):
     st.markdown("### How to read the Data Grids")
     st.caption("Use this guide to quickly interpret the color-coded models and advanced Statcast abbreviations.")
-    st.info("💡 **Pro-Tip:** Click on any column header name in the grids below to instantly sort the data from highest-to-lowest or lowest-to-highest!")
     
     leg_col1, leg_col2, leg_col3 = st.columns(3)
     
@@ -435,7 +450,8 @@ def _render_isolated_matchup(df: pd.DataFrame):
 def _get_label_string(row):
     try:
         t = pd.to_datetime(row["gameTime"]).tz_convert("US/Eastern")
-        return f"🏟️ {row['away_team_abbr']} @ {row['home_team_abbr']} ({t.strftime('%-I:%M %p ET')})"
+        # Cleansed Local Eastern Time Stamp configuration
+        return f"🏟️ {row['away_team_abbr']} @ {row['home_team_abbr']} · ⏰ {t.strftime('%-I:%M %p ET')}"
     except Exception:
         return f"🏟️ {row['away_team_abbr']} @ {row['home_team_abbr']}"
 
@@ -458,7 +474,10 @@ for _, game in slate.iterrows():
         env3.metric("Weather Multiplier", f"{ctx['hr_mult']:.2f}×", delta=f"{(ctx['hr_mult'] - 1) * 100:+.0f}% Impact")
         
         if vegas and vegas.get("total"):
-            env4.metric("Vegas Line (O/U)", f"{vegas['total']:.1f}", delta=f"Away Implied: {vegas.get('away_implied', '—')} | Home Implied: {vegas.get('home_implied', '—')}")
+            total_val = vegas['total']
+            # Sharp color flag warning condition engine adjustment
+            total_delta = "🔥 High Game Total" if total_val >= 8.5 else f"AT: {vegas.get('away_implied', '—')} | HT: {vegas.get('home_implied', '—')}"
+            env4.metric("Vegas Line (O/U)", f"{total_val:.1f}", delta=total_delta)
         else:
             env4.metric("Vegas Line (O/U)", "—")
             
@@ -472,7 +491,7 @@ for _, game in slate.iterrows():
         )
         
         # ---------------------------------------------------------------------------
-        # GAME-BY-GAME OVERALL BEST PLAYER FUNNEL (Isolated Game Contender Card)
+        # GAME-BY-GAME OVERALL BEST PLAYER FUNNEL
         # ---------------------------------------------------------------------------
         all_game_hitters = []
         if ctx["away_matchup"] is not None and not ctx["away_matchup"].empty:
@@ -498,14 +517,10 @@ for _, game in slate.iterrows():
                     # 🔬 Advanced Pitch Sequence Profile (2-Strike Put-Away Engine)
                     # ---------------------------------------------------------------------------
                     if not pitcher_arsenal_all.empty:
-                        # Identify who today's opposing starter actually is
                         opp_p_id = game["home_pitcher_id"] if best_hitter_row.get("player_id") in ctx["away_matchup"]["player_id"].values else game["away_pitcher_id"]
-                        
-                        # Filter the global arsenal data down to this specific starting pitcher
                         p_arsenal = pitcher_arsenal_all[pitcher_arsenal_all.get("player_id") == opp_p_id] if "player_id" in pitcher_arsenal_all.columns else pd.DataFrame()
                         
                         if not p_arsenal.empty and "put_away" in p_arsenal.columns:
-                            # Isolate their single highest usage weapon when they are hunting for a strikeout
                             deadliest_pitch_row = p_arsenal.sort_values(by="put_away", ascending=False).iloc[0]
                             put_away_pitch_name = deadliest_pitch_row.get("pitch_name", "Breaking Ball")
                             put_away_rate = deadliest_pitch_row.get("put_away", 0)
@@ -517,7 +532,6 @@ for _, game in slate.iterrows():
                                 f"**{best_hitter_row.get('best_pitch_xwoba', 0.320):.3f} xwOBA** · **{best_hitter_row.get('pitch_match_score', 50):.1f} Matchup Fit Rating**."
                             )
                             
-                            # Give a clear situational betting alert if the hitter excels against the pitcher's go-to execution pitch
                             if best_hitter_row.get("best_pitch") == put_away_pitch_name or best_hitter_row.get("best_pitch_xwoba", 0) > 0.380:
                                 st.success(f"🔥 **SEQUENCE EDGE DETECTED:** This pitcher relies on their {put_away_pitch_name} to finish counts, but analytics indicate `{best_hitter_row.get('player_name')}` actively crushes that exact movement profile. Major mistake window expected.")
         
@@ -559,8 +573,12 @@ for _, game in slate.iterrows():
                     if k_subset:
                         k_sty = k_sty.background_gradient(cmap="RdYlGn", subset=k_subset)
                         
+                    # Sharp betting context display column updates
+                    rename_k_labels = {"Line Threshold": "Sportsbook Threshold", "Probability Edge": "Probability of Over"}
+                    k_sty = k_sty.relabel_index([rename_k_labels.get(c, c) for c in lines_df.columns], axis="columns")
+                    
                     st.dataframe(
-                        k_sty.format({"Probability Edge": "{:.0%}"}, na_rep="—"),
+                        k_sty.format({"Probability of Over": "{:.0%}"}, na_rep="—"),
                         hide_index=True, use_container_width=True
                     )
                     
