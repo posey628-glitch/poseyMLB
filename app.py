@@ -26,6 +26,7 @@ from models import build_matchup_table, build_pitcher_slate
 from park_factors import get_park
 from weather import fetch_weather, hr_multiplier
 from sleepers import hr_probability, find_sleepers, grand_slam_probability
+from sleepers import find_sleepers, grand_slam_probability
 from splits import (
     bvp_for_lineup, find_similar_pitchers, hitter_vs_similar,
 )
@@ -139,6 +140,7 @@ st.caption(f"{len(slate)} games · {len(hitter_stats)} hitters · {len(pitcher_s
 with st.expander("📖 Dashboard Metric Legend & Quick Reference Guide", expanded=False):
     st.markdown("### How to read the Data Grids")
     st.caption("Use this guide to quickly interpret the color-coded models and advanced Statcast abbreviations.")
+    st.info("💡 **Pro-Tip:** Click on any column header name in the grids below to instantly sort the data from highest-to-lowest or lowest-to-highest!")
     
     leg_col1, leg_col2, leg_col3 = st.columns(3)
     
@@ -293,7 +295,6 @@ for idx, (_, game) in enumerate(slate.iterrows()):
     home_lineup_k_pct = home_matchup["k_pct"].mean() if "k_pct" in home_matchup.columns and not home_matchup.empty else 22
 
     away_k_proj = k_total_projection(away_p_row, home_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if away_p_row else {}
-    # Fixed typo here (swapped check from home_k_proj to home_p_row)
     home_k_proj = k_total_projection(home_p_row, away_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if home_p_row else {}
 
     game_context_map[game["gamePk"]] = {
@@ -311,7 +312,7 @@ progress.empty()
 
 
 # ---------------------------------------------------------------------------
-# 📋 Slate Summary — Starting Pitchers 
+# 📋 Slate Summary — Starting Pitchers
 # ---------------------------------------------------------------------------
 
 st.subheader("📋 Starting Pitcher Overview")
@@ -378,7 +379,7 @@ st.divider()
 # ---------------------------------------------------------------------------
 
 st.subheader("🎮 Isolated Game-by-Game Matchups")
-st.caption("Every active position player mapped directly to today's starting pitcher. Columns are color-weighted dynamically.")
+st.caption("Every active position player mapped directly to today's starting pitcher. Columns can be clicked to sort instantly from best to worst.")
 
 def _render_isolated_matchup(df: pd.DataFrame):
     """Render hitter grid using native keys and viewport layer renaming adjustments."""
@@ -477,6 +478,31 @@ for _, game in slate.iterrows():
             f"**Atmospheric Context:** {ctx['summary'] or 'No wind data available'}  ·  "
             f"**Catcher Framing Influence:** Away: {ctx['away_framing']:.2f}× / Home: {ctx['home_framing']:.2f}×"
         )
+        
+        # ---------------------------------------------------------------------------
+        # GAME-BY-GAME OVERALL BEST PLAYER FUNNEL (Isolated Game Contender Card)
+        # ---------------------------------------------------------------------------
+        all_game_hitters = []
+        if ctx["away_matchup"] is not None and not ctx["away_matchup"].empty:
+            all_game_hitters.append(ctx["away_matchup"].copy())
+        if ctx["home_matchup"] is not None and not ctx["home_matchup"].empty:
+            all_game_hitters.append(ctx["home_matchup"].copy())
+            
+        if all_game_hitters:
+            combined_game_hitters = pd.concat(all_game_hitters, ignore_index=True)
+            if "hr_game_pct" in combined_game_hitters.columns:
+                # Isolate the singular highest-probability power target for this specific game card
+                best_hitter_row = combined_game_hitters.sort_values(by="hr_game_pct", ascending=False).iloc[0]
+                
+                with st.container(border=True):
+                    # Clean markdown layout to broadcast the edge directly
+                    st.markdown(f"👑 **Top Matchup HR Contender:** `{best_hitter_row.get('player_name', 'Unknown Hitter')}`")
+                    st.markdown(
+                        f"- **Calibrated Prop Odds:** {best_hitter_row.get('hr_game_pct', 0):.1f}% Chance of ≥1 HR today "
+                        f"(Pure PA Projection Rate: {best_hitter_row.get('hr_pa_pct', 0):.2f}%)\n"
+                        f"- **Analytics Anchor:** Matchup Grading sits at **{best_hitter_row.get('matchup', 50):.1f}** "
+                        f"with a raw **{best_hitter_row.get('iso', 0):.3f} ISO** profiles against today's target pitch types."
+                    )
         
         # Dynamic Data Tabs for separate batting views
         away_tab_title = f"🏏 {game['away_team_abbr']} Hitters vs {game['home_pitcher']}"
