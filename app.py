@@ -293,7 +293,8 @@ for idx, (_, game) in enumerate(slate.iterrows()):
     home_lineup_k_pct = home_matchup["k_pct"].mean() if "k_pct" in home_matchup.columns and not home_matchup.empty else 22
 
     away_k_proj = k_total_projection(away_p_row, home_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if away_p_row else {}
-    home_k_proj = k_total_projection(home_p_row, away_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if home_k_proj else {}
+    # Fixed typo here (swapped check from home_k_proj to home_p_row)
+    home_k_proj = k_total_projection(home_p_row, away_lineup_k_pct, ump_k_factor=ump.get("k_factor", 1.0)) if home_p_row else {}
 
     game_context_map[game["gamePk"]] = {
         "park": park, "weather": weather, "wx_mult": wx_mult, "park_mult": park_mult,
@@ -310,7 +311,7 @@ progress.empty()
 
 
 # ---------------------------------------------------------------------------
-# 📋 Slate Summary — Starting Pitchers (Safe Native-Styling Architecture)
+# 📋 Slate Summary — Starting Pitchers 
 # ---------------------------------------------------------------------------
 
 st.subheader("📋 Starting Pitcher Overview")
@@ -328,7 +329,6 @@ pitcher_slate = build_pitcher_slate(slate, pitcher_stats, {
 if not pitcher_slate.empty:
     pitcher_slate["verdict"] = pitcher_slate["test_score"].apply(lambda x: verdict_color(x, scale=(45, 65)))
     
-    # Define our structural layout order using native DataFrame keys
     base_cols = ["verdict", "pitcher_name", "team", "home_away", "opp", "throws"]
     metric_cols = ["test_score", "kHR", "proj_k", "form_arrow", "era", "whip", "k9", "bb9", "hr9", 
                    "k_pct", "whiff_pct", "csw_pct", "xwoba_allowed", "barrel_allowed", 
@@ -337,7 +337,6 @@ if not pitcher_slate.empty:
     existing_metrics = [c for c in metric_cols if c in pitcher_slate.columns]
     display = pitcher_slate[base_cols + existing_metrics].copy().reset_index(drop=True)
     
-    # STYLING RULES: Apply gradients directly to raw keys before renaming map
     green_p = [c for c in ["test_score", "kHR", "proj_k", "k9", "k_pct", "whiff_pct", "csw_pct", "recent_k9"] 
                if c in display.columns and pd.to_numeric(display[c], errors='coerce').notna().any()]
     red_p = [c for c in ["era", "whip", "bb9", "hr9", "xwoba_allowed", "barrel_allowed", "recent_era"] 
@@ -349,7 +348,6 @@ if not pitcher_slate.empty:
     if red_p:
         sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_p)
         
-    # Construct raw data styling format profiles
     format_dict = {}
     for c in ["test_score", "kHR", "proj_k", "k_pct", "whiff_pct", "csw_pct", "barrel_allowed"]:
         if c in display.columns: format_dict[c] = "{:.1f}"
@@ -361,7 +359,6 @@ if not pitcher_slate.empty:
     
     sty = sty.format(format_dict, na_rep="—")
     
-    # RENAME AT THE VIEWPORT LAYER: Modifying Styler column strings leaves index history untouched
     rename_mapping = {
         "verdict": "", "pitcher_name": "Pitcher", "team": "Tm", "home_away": "", "opp": "Opp", "throws": "T",
         "test_score": "Test", "kHR": "kHR", "proj_k": "Proj K", "form_arrow": "Trend",
