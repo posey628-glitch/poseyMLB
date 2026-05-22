@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime
 import pandas as pd
 import streamlit as st
+import re
 
+# ---------------- IMPORTS ----------------
 from data_fetcher import *
 from models import *
 from park_factors import get_park
@@ -46,6 +48,13 @@ def c_weather(lat, lon, dt):
     return fetch_weather(lat, lon, dt)
 
 # ---------------- HELPERS ----------------
+
+def clean_name(name: str):
+    if not isinstance(name, str):
+        return name
+    name = re.sub(r"[^a-zA-Z\s]", "", name)
+    return name.lower().strip()
+
 def calculate_4tier_emoji(score, scale=(45,65)):
     if pd.isna(score): return "⚪"
     low, high = scale
@@ -56,12 +65,13 @@ def calculate_4tier_emoji(score, scale=(45,65)):
     return "🔴"
 
 def apply_stat_fallbacks(df):
+
     df["data_source"] = "statcast"
 
     if "iso" in df.columns and "iso_fg" in df.columns:
-        mask = df["iso"].isna() & df["iso_fg"].notna()
-        df.loc[mask, "iso"] = df.loc[mask, "iso_fg"]
-        df.loc[mask, "data_source"] = "fangraphs"
+        use_fg = df["iso"].isna() & df["iso_fg"].notna()
+        df.loc[use_fg, "iso"] = df.loc[use_fg, "iso_fg"]
+        df.loc[use_fg, "data_source"] = "fangraphs"
 
     if "xwoba" in df.columns and "woba_fg" in df.columns:
         df["xwoba"] = df["xwoba"].combine_first(df["woba_fg"])
@@ -69,45 +79,65 @@ def apply_stat_fallbacks(df):
     return df
 
 def add_data_score(df):
+
     scores = []
+
     for row in df.itertuples():
+
         s = 0
-        if not pd.isna(getattr(row, "iso", None)): s += 2
-        if not pd.isna(getattr(row, "xwoba", None)): s += 2
-        if not pd.isna(getattr(row, "barrel_pct", None)): s += 2
-        if not pd.isna(getattr(row, "k_pct", None)): s += 1
+
+        if not pd.isna(getattr(row,"iso",None)): s += 2
+        if not pd.isna(getattr(row,"xwoba",None)): s += 2
+        if not pd.isna(getattr(row,"barrel_pct",None)): s += 2
+        if not pd.isna(getattr(row,"k_pct",None)): s += 1
+
         scores.append(s)
+
     df["data_score"] = scores
     return df
 
 def row_color(row):
-    e = row.get("model_edge", None)
-    if pd.isna(e): return [""] * len(row)
 
-    if e >= 8: return ["background-color: rgba(0,255,0,0.15)"] * len(row)
-    elif e >= 4: return ["background-color: rgba(255,255,0,0.15)"] * len(row)
-    elif e >= 0: return ["background-color: rgba(255,165,0,0.15)"] * len(row)
-    else: return ["background-color: rgba(255,0,0,0.10)"] * len(row)
+    e = row.get("model_edge", None)
+
+    if pd.isna(e): return [""]*len(row)
+
+    if e >= 8:
+        return ["background-color: rgba(0,255,0,0.15)"]*len(row)
+    elif e >= 4:
+        return ["background-color: rgba(255,255,0,0.15)"]*len(row)
+    elif e >= 0:
+        return ["background-color: rgba(255,165,0,0.15)"]*len(row)
+    else:
+        return ["background-color: rgba(255,0,0,0.10)"]*len(row)
 
 # ---------------- SIDEBAR ----------------
+
 with st.sidebar:
     st.title("⚾ MLB Props")
-
     selected_date = st.date_input("Slate", value=date.today())
-
     search_player = st.text_input("Search Player")
-    min_hr = st.slider("Min HR%", 0.0, 50.0, 5.0)
+    min_hr = st.slider("Min HR%",0.0,50.0,5.0)
+
+    if st.button("Refresh"):
+        st.cache_data.clear()
+        st.rerun()
 
 # ---------------- LOAD ----------------
+
 slate = c_slate(selected_date.isoformat())
 if slate.empty:
     st.stop()
 
 hitter_stats = c_hitter().merge(c_h_trad(), on="player_id", how="left")
 
-# ✅ Add Fangraphs
+# ✅ CLEAN NAME
+hitter_stats["player_name_clean"] = hitter_stats["player_name"].apply(clean_name)
+
+# ✅ FANGRAPHS
 fg = c_fangraphs()
-hitter_stats = hitter_stats.merge(fg, on="player_name", how="left")
+if not fg.empty:
+    hitter_stats = hitter_stats.merge(fg, on="player_name_clean", how="left")
 
 pitcher_stats = c_pitcher().merge(c_p_trad(), on="player_id", how="left")
 
@@ -115,19 +145,21 @@ pitcher_arsenal = c_pitch_arsenal()
 hitter_pitch = c_hitter_pitch()
 
 # ---------------- ENGINE ----------------
+
 game_map = {}
 
 for g in slate.itertuples():
 
     park = get_park(getattr(g,"venue",""))
+
     weather = c_weather(park.get("lat"), park.get("lon"), datetime.now()) if park.get("lat") else {}
 
     wx_mult, wx_text = hr_multiplier(weather, park)
     park_mult = park.get("hr_factor",100)/100
     total_mult = wx_mult * park_mult
 
-    away_lineup = get_lineup(g.gamePk, "away")
-    home_lineup = get_lineup(g.gamePk, "home")
+    away_lineup = get_lineup(g.gamePk,"away")
+    home_lineup = get_lineup(g.gamePk,"home")
 
     ap = pitcher_stats[pitcher_stats.player_id==g.away_pitcher_id]
     hp = pitcher_stats[pitcher_stats.player_id==g.home_pitcher_id]
@@ -156,7 +188,14 @@ for g in slate.itertuples():
         hr_game, edges = [], []
 
         for row in df.itertuples():
-            pa = hr_prob_per_pa(row._asdict(), p, park_factor=park_mult, weather_mult=wx_mult)
+
+            pa = hr_prob_per_pa(
+                row._asdict(),
+                p,
+                park_factor=park_mult,
+                weather_mult=wx_mult
+            )
+
             game_hr = hr_prob_full_game(pa)*100
             hr_game.append(game_hr)
             edges.append(game_hr - 12.5)
@@ -171,7 +210,8 @@ for g in slate.itertuples():
         hr_mult=total_mult
     )
 
-# ---------------- VALIDATION PANEL ----------------
+# ---------------- VALIDATION ----------------
+
 st.subheader("🧪 Data Validation")
 
 all_df = pd.concat(
@@ -184,12 +224,8 @@ if not all_df.empty:
     st.write("Total Hitters:", len(all_df))
     st.write("Missing ISO:", all_df["iso"].isna().sum() if "iso" in all_df.columns else "-")
 
-    low = all_df[all_df["data_score"] <= 3]
-    if not low.empty:
-        st.warning(f"{len(low)} low-quality profiles")
-        st.dataframe(low[["player_name","data_score","data_source"]])
-
 # ---------------- RENDER ----------------
+
 def render(df):
 
     if df.empty:
@@ -213,6 +249,7 @@ def render(df):
     st.dataframe(styled, use_container_width=True)
 
 # ---------------- UI ----------------
+
 st.subheader("🎮 Games")
 
 for g in slate.itertuples():
@@ -221,11 +258,14 @@ for g in slate.itertuples():
 
     st.markdown(f"### {g.away_team_abbr} @ {g.home_team_abbr}")
 
-    col1,col2 = st.columns(2)
-    col1.metric("HR Mult", f"{ctx['hr_mult']:.2f}")
-    col2.metric("Weather", ctx["weather"])
+    c1,c2 = st.columns(2)
+    c1.metric("HR Mult", f"{ctx['hr_mult']:.2f}")
+    c2.metric("Weather", ctx["weather"])
 
-    tab1,tab2 = st.tabs(["Away","Home"])
+    t1,t2 = st.tabs(["Away","Home"])
 
-    with tab1: render(ctx["away"])
-    with tab2: render(ctx["home"])
+    with t1:
+        render(ctx["away"])
+
+    with t2:
+        render(ctx["home"])
