@@ -219,7 +219,7 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         hitter_stats, pitcher_stats, recent_form_dict=home_recent,
     )
 
-    # Pitch match scores
+    # Pitch match scores (Updated with bulletproof columns check)
     if use_pitch_match and not pitcher_arsenal_all.empty and not hitter_pitch_arsenal.empty:
         away_pm = lineup_pitch_match(
             away_lineup, game["home_pitcher_id"],
@@ -229,18 +229,24 @@ for idx, (_, game) in enumerate(slate.iterrows()):
             home_lineup, game["away_pitcher_id"],
             hitter_pitch_arsenal, pitcher_arsenal_all,
         )
+        
+        pm_target_cols = ["player_id", "pitch_match_score", "best_pitch", "best_pitch_xwoba", "worst_pitch", "weighted_xwoba"]
+        
         if not away_pm.empty and not away_matchup.empty:
-            away_matchup = away_matchup.merge(
-                away_pm[["player_id", "pitch_match_score", "best_pitch", "best_pitch_xwoba",
-                          "worst_pitch", "weighted_xwoba"]],
-                on="player_id", how="left",
-            )
+            away_pm_keep = [col for col in pm_target_cols if col in away_pm.columns]
+            if "player_id" in away_pm_keep:
+                away_matchup = away_matchup.merge(
+                    away_pm[away_pm_keep],
+                    on="player_id", how="left",
+                )
+                
         if not home_pm.empty and not home_matchup.empty:
-            home_matchup = home_matchup.merge(
-                home_pm[["player_id", "pitch_match_score", "best_pitch", "best_pitch_xwoba",
-                          "worst_pitch", "weighted_xwoba"]],
-                on="player_id", how="left",
-            )
+            home_pm_keep = [col for col in pm_target_cols if col in home_pm.columns]
+            if "player_id" in home_pm_keep:
+                home_matchup = home_matchup.merge(
+                    home_pm[home_pm_keep],
+                    on="player_id", how="left",
+                )
 
     # Layer on sleeper / GS / HR prob (existing system - kept for backward compat)
     away_matchup = hr_probability(away_matchup, pd.Series(home_p_row) if home_p_row else None, full_hr_mult)
@@ -297,6 +303,7 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         ump_k_factor=ump.get("k_factor", 1.0),
     ) if home_p_row else {}
 
+    # Extract framing metrics with a safe dict default to prevent KeyError down the line
     ctx = {
         "park": park, "weather": weather, "wx_mult": wx_mult, "park_mult": park_mult,
         "hr_mult": full_hr_mult, "summary": wx_summary,
@@ -305,6 +312,8 @@ for idx, (_, game) in enumerate(slate.iterrows()):
         "away_p_row": away_p_row, "home_p_row": home_p_row,
         "away_matchup": away_matchup, "home_matchup": home_matchup,
         "away_k_proj": away_k_proj, "home_k_proj": home_k_proj,
+        "away_framing": away_p_row.get("catcher_framing_k_factor", 1.0),
+        "home_framing": home_p_row.get("catcher_framing_k_factor", 1.0),
     }
     game_context_map[game["gamePk"]] = ctx
 
