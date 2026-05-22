@@ -310,7 +310,7 @@ progress.empty()
 
 
 # ---------------------------------------------------------------------------
-# 📋 Slate Summary — Starting Pitchers (Fixed Crash Zone)
+# 📋 Slate Summary — Starting Pitchers (Fixed Formatting KeyError)
 # ---------------------------------------------------------------------------
 
 st.subheader("📋 Starting Pitcher Overview")
@@ -328,7 +328,6 @@ pitcher_slate = build_pitcher_slate(slate, pitcher_stats, {
 if not pitcher_slate.empty:
     pitcher_slate["verdict"] = pitcher_slate["test_score"].apply(lambda x: verdict_color(x, scale=(45, 65)))
     
-    # 1. Define the precise map of original keys to final labels
     rename_mapping = {
         "test_score": "Test", "kHR": "kHR", "proj_k": "Proj K", "form_arrow": "Trend",
         "era": "ERA", "whip": "WHIP", "k9": "K/9", "bb9": "BB/9", "hr9": "HR/9",
@@ -336,7 +335,6 @@ if not pitcher_slate.empty:
         "recent_era": "L5 ERA", "recent_k9": "L5 K/9", "days_rest": "Rest", "avg_recent_pitches": "Pitches"
     }
     
-    # 2. Extract only the columns that actually exist inside pitcher_slate right now
     base_cols = ["verdict", "pitcher_name", "team", "home_away", "opp", "throws"]
     existing_data_cols = [c for c in rename_mapping.keys() if c in pitcher_slate.columns]
     
@@ -345,7 +343,6 @@ if not pitcher_slate.empty:
         **rename_mapping
     })
     
-    # 3. Apply styles safely based purely on columns that made it to the final display frame
     green_p = [c for c in ["Test", "kHR", "Proj K", "K/9", "K%", "Whiff%", "CSW%", "L5 K/9"] if c in display.columns]
     red_p = [c for c in ["ERA", "WHIP", "BB/9", "HR/9", "xwOBA", "Brl%", "L5 ERA"] if c in display.columns]
     
@@ -355,11 +352,28 @@ if not pitcher_slate.empty:
     if red_p:
         sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_p)
         
-    sty = sty.format({
-        **{c: "{:.1f}" for c in ["Test", "kHR", "Proj K", "K%", "Whiff%", "CSW%", "Brl%"] if c in display.columns},
-        **{c: "{:.2f}" for c in ["ERA", "WHIP", "K/9", "BB/9", "HR/9", "L5 ERA", "L5 K/9"] if c in display.columns},
-        "xwOBA": "{:.3f}", "Rest": "{:.0f}d", "Pitches": "{:.0f}",
-    }, na_rep="—")
+    # Dynamically build the format dictionary to ensure we NEVER call format on a non-existent column
+    format_dict = {}
+    
+    one_decimal_targets = ["Test", "kHR", "Proj K", "K%", "Whiff%", "CSW%", "Brl%"]
+    two_decimal_targets = ["ERA", "WHIP", "K/9", "BB/9", "HR/9", "L5 ERA", "L5 K/9"]
+    
+    for c in one_decimal_targets:
+        if c in display.columns:
+            format_dict[c] = "{:.1f}"
+            
+    for c in two_decimal_targets:
+        if c in display.columns:
+            format_dict[c] = "{:.2f}"
+            
+    if "xwOBA" in display.columns:
+        format_dict["xwOBA"] = "{:.3f}"
+    if "Rest" in display.columns:
+        format_dict["Rest"] = "{:.0f}d"
+    if "Pitches" in display.columns:
+        format_dict["Pitches"] = "{:.0f}"
+
+    sty = sty.format(format_dict, na_rep="—")
     st.dataframe(sty, hide_index=True, use_container_width=True, height=350)
 
 st.divider()
@@ -404,12 +418,29 @@ def _render_isolated_matchup(df: pd.DataFrame):
     if red_m:
         sty = sty.background_gradient(cmap="RdYlGn_r", subset=red_m)
         
-    sty = sty.format({
-        **{c: "{:.1f}" for c in ["Matchup", "Test", "Pitch Match", "Sleeper"] if c in display.columns},
-        "HR Game%": "{:.1f}%", "HR PA%": "{:.2f}%", "GS": "{:.2f}",
-        "ISO": "{:.3f}", "xwOBA": "{:.3f}", "xwOBAcon": "{:.3f}", "Best xwOBA": "{:.3f}",
-        "Brl%": "{:.1f}%", "FB%": "{:.1f}%", "K%": "{:.1f}%", "BB%": "{:.1f}%", "Whiff%": "{:.1f}%", "LA": "{:.1f}",
-    }, na_rep="—")
+    # Dynamically build formats for isolated matchup grids as well
+    m_format_dict = {}
+    
+    m_one_decimal = ["Matchup", "Test", "Pitch Match", "Sleeper"]
+    for c in m_one_decimal:
+        if c in display.columns:
+            m_format_dict[c] = "{:.1f}"
+            
+    if "HR Game%" in display.columns: m_format_dict["HR Game%"] = "{:.1f}%"
+    if "HR PA%" in display.columns: m_format_dict["HR PA%"] = "{:.2f}%"
+    if "GS" in display.columns: m_format_dict["GS"] = "{:.2f}"
+    if "ISO" in display.columns: m_format_dict["ISO"] = "{:.3f}"
+    if "xwOBA" in display.columns: m_format_dict["xwOBA"] = "{:.3f}"
+    if "xwOBAcon" in display.columns: m_format_dict["xwOBAcon"] = "{:.3f}"
+    if "Best xwOBA" in display.columns: m_format_dict["Best xwOBA"] = "{:.3f}"
+    if "Brl%" in display.columns: m_format_dict["Brl%"] = "{:.1f}%"
+    if "FB%" in display.columns: m_format_dict["FB%"] = "{:.1f}%"
+    if "K%" in display.columns: m_format_dict["K%"] = "{:.1f}%"
+    if "BB%" in display.columns: m_format_dict["BB%"] = "{:.1f}%"
+    if "Whiff%" in display.columns: m_format_dict["Whiff%"] = "{:.1f}%"
+    if "LA" in display.columns: m_format_dict["LA"] = "{:.1f}"
+
+    sty = sty.format(m_format_dict, na_rep="—")
     st.dataframe(sty, hide_index=True, use_container_width=True)
 
 def _get_label_string(row):
